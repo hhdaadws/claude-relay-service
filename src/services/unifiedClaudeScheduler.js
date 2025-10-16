@@ -139,7 +139,12 @@ class UnifiedClaudeScheduler {
   }
 
   // 🎯 统一调度Claude账号（官方和Console）
-  async selectAccountForApiKey(apiKeyData, sessionHash = null, requestedModel = null) {
+  async selectAccountForApiKey(
+    apiKeyData,
+    sessionHash = null,
+    requestedModel = null,
+    excludeAccountIds = []
+  ) {
     try {
       // 解析供应商前缀
       const { vendor, baseModel } = parseVendorPrefixedModel(requestedModel)
@@ -293,7 +298,8 @@ class UnifiedClaudeScheduler {
       const availableAccounts = await this._getAllAvailableAccounts(
         apiKeyData,
         effectiveModel,
-        false // 仅前缀才走 CCR：默认池不包含 CCR 账户
+        false, // 仅前缀才走 CCR：默认池不包含 CCR 账户
+        excludeAccountIds // 排除指定的账户（如重试时排除失败的账户）
       )
 
       if (availableAccounts.length === 0) {
@@ -338,7 +344,12 @@ class UnifiedClaudeScheduler {
   }
 
   // 📋 获取所有可用账户（合并官方和Console）
-  async _getAllAvailableAccounts(apiKeyData, requestedModel = null, includeCcr = false) {
+  async _getAllAvailableAccounts(
+    apiKeyData,
+    requestedModel = null,
+    includeCcr = false,
+    excludeAccountIds = []
+  ) {
     const availableAccounts = []
     const isOpusRequest =
       requestedModel && typeof requestedModel === 'string'
@@ -488,6 +499,12 @@ class UnifiedClaudeScheduler {
           continue
         }
 
+        // 检查是否在排除列表中
+        if (excludeAccountIds.includes(account.id)) {
+          logger.info(`🚫 跳过排除的账户: ${account.name} (${account.id})`)
+          continue
+        }
+
         // 检查是否被限流
         const isRateLimited = await claudeAccountService.isAccountRateLimited(account.id)
         if (isRateLimited) {
@@ -531,6 +548,12 @@ class UnifiedClaudeScheduler {
         this._isSchedulable(account.schedulable)
       ) {
         // 检查是否可调度
+
+        // 检查是否在排除列表中
+        if (excludeAccountIds.includes(account.id)) {
+          logger.info(`🚫 跳过排除的 Claude Console 账户: ${account.name} (${account.id})`)
+          continue
+        }
 
         // 检查模型支持
         if (!this._isModelSupportedByAccount(account, 'claude-console', requestedModel)) {
@@ -601,6 +624,12 @@ class UnifiedClaudeScheduler {
           account.accountType === 'shared' &&
           this._isSchedulable(account.schedulable)
         ) {
+          // 检查是否在排除列表中
+          if (excludeAccountIds.includes(account.id)) {
+            logger.info(`🚫 跳过排除的 Bedrock 账户: ${account.name} (${account.id})`)
+            continue
+          }
+
           // 检查是否可调度
 
           availableAccounts.push({
@@ -637,6 +666,12 @@ class UnifiedClaudeScheduler {
           account.accountType === 'shared' &&
           this._isSchedulable(account.schedulable)
         ) {
+          // 检查是否在排除列表中
+          if (excludeAccountIds.includes(account.id)) {
+            logger.info(`🚫 跳过排除的 CCR 账户: ${account.name} (${account.id})`)
+            continue
+          }
+
           // 检查模型支持
           if (!this._isModelSupportedByAccount(account, 'ccr', requestedModel)) {
             continue

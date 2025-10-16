@@ -489,16 +489,18 @@ async function handleMessagesRequest(req, res) {
       let response
       let accountId
       let accountType
+      let excludeAccountIds = [] // 记录失败的账户ID，重试时排除
 
       while (retryCount <= MAX_RETRIES) {
         try {
-          // 使用统一调度选择账号（传递请求的模型）
+          // 使用统一调度选择账号（传递请求的模型和排除的账户ID）
           const requestedModel = req.body.model
           try {
             const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
               req.apiKey,
               sessionHash,
-              requestedModel
+              requestedModel,
+              excludeAccountIds // 重试时排除失败的账户
             )
             ;({ accountId, accountType } = selection)
           } catch (error) {
@@ -601,6 +603,10 @@ async function handleMessagesRequest(req, res) {
             logger.warn(
               `⚠️ 首选账户 ${error.accountId} 发生 520 no body 错误，使用备用账户重试（第 ${retryCount + 1}/${MAX_RETRIES} 次尝试）`
             )
+
+            // 将失败的账户ID添加到排除列表
+            excludeAccountIds.push(error.accountId)
+            logger.info(`🚫 已将账户 ${error.accountId} 添加到排除列表，重试时不会选择此账户`)
 
             // 删除粘性会话映射，强制重新选择
             if (sessionHash) {
