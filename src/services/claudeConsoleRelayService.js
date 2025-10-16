@@ -418,6 +418,41 @@ class ClaudeConsoleRelayService {
         .then((response) => {
           logger.debug(`🌊 Claude Console Claude stream response status: ${response.status}`)
 
+          // 🆕 520 错误提前检测（在发送响应头之前）
+          if (response.status === 520) {
+            logger.warn(`🚫 检测到流式请求的 520 错误，账户 ${accountId}，尝试抛出异常触发重试`)
+
+            // 发送 webhook 通知
+            try {
+              const webhookNotifier = require('../utils/webhookNotifier')
+              webhookNotifier
+                .sendAccountAnomalyNotification({
+                  accountId,
+                  accountName: account.name || 'Claude Console Account',
+                  platform: 'claude-console',
+                  status: 'warning',
+                  errorCode: 'CLAUDE_CONSOLE_520_STREAM',
+                  reason: '流式请求返回 520 错误，尝试切换到备用账户重试。账户仍保持可用状态。',
+                  timestamp: new Date().toISOString()
+                })
+                .catch((webhookError) => {
+                  logger.error('发送 520 流式 Webhook 通知失败:', webhookError)
+                })
+            } catch (e) {
+              logger.error('处理 520 流式错误时异常:', e)
+            }
+
+            // 抛出错误，让上层重试（仅在响应头未发送时）
+            if (!responseStream.headersSent) {
+              const error = new Error('流式请求 520 no body 错误 - 使用备用账户重试')
+              error.code = 'CLAUDE_CONSOLE_520_NO_BODY'
+              error.accountId = accountId
+              error.shouldRetry = true
+              reject(error)
+              return
+            }
+          }
+
           // 错误响应处理
           if (response.status !== 200) {
             logger.error(

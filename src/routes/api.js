@@ -103,366 +103,427 @@ async function handleMessagesRequest(req, res) {
 
     if (isStream) {
       // 流式响应 - 只使用官方真实usage数据
-      res.setHeader('Content-Type', 'text/event-stream')
-      res.setHeader('Cache-Control', 'no-cache')
-      res.setHeader('Connection', 'keep-alive')
-      res.setHeader('Access-Control-Allow-Origin', '*')
-      res.setHeader('X-Accel-Buffering', 'no') // 禁用 Nginx 缓冲
+      // ⚠️ 注意：不要在这里提前设置响应头，等到确认可以成功转发后再设置
 
       // 禁用 Nagle 算法，确保数据立即发送
       if (res.socket && typeof res.socket.setNoDelay === 'function') {
         res.socket.setNoDelay(true)
       }
 
-      // 流式响应不需要额外处理，中间件已经设置了监听器
-
       let usageDataCaptured = false
 
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
 
-      // 使用统一调度选择账号（传递请求的模型）
-      const requestedModel = req.body.model
+      // 🆕 支持重试的流式请求逻辑
+      let retryCount = 0
+      const MAX_RETRIES = 1 // 最多重试1次
       let accountId
       let accountType
-      try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          req.apiKey,
-          sessionHash,
-          requestedModel
-        )
-        ;({ accountId, accountType } = selection)
-      } catch (error) {
-        if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
-            error.rateLimitEndAt
-          )
-          res.status(403)
-          res.setHeader('Content-Type', 'application/json')
-          res.end(
-            JSON.stringify({
-              error: 'upstream_rate_limited',
-              message: limitMessage
-            })
-          )
-          return
-        }
-        throw error
-      }
+      let excludeAccountIds = [] // 记录失败的账户ID，重试时排除
 
-      // 根据账号类型选择对应的转发服务并调用
-      if (accountType === 'claude-official') {
-        // 官方Claude账号使用原有的转发服务（会自己选择账号）
-        await claudeRelayService.relayStreamRequestWithUsageCapture(
-          req.body,
-          req.apiKey,
-          res,
-          req.headers,
-          (usageData) => {
-            // 回调函数：当检测到完整usage数据时记录真实token使用量
-            logger.info(
-              '🎯 Usage callback triggered with complete data:',
-              JSON.stringify(usageData, null, 2)
-            )
-
-            if (
-              usageData &&
-              usageData.input_tokens !== undefined &&
-              usageData.output_tokens !== undefined
-            ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
-
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
-
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
-
-              // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
-              const { accountId: usageAccountId } = usageData
-
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
-
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
-                }
-              }
-
-              apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'claude')
-                .catch((error) => {
-                  logger.error('❌ Failed to record stream usage:', error)
-                })
-
-              queueRateLimitUpdate(
-                req.rateLimitInfo,
-                {
-                  inputTokens,
-                  outputTokens,
-                  cacheCreateTokens,
-                  cacheReadTokens
-                },
-                model,
-                'claude-stream'
-              )
-
-              usageDataCaptured = true
-              logger.api(
-                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
-              )
-            } else {
-              logger.warn(
-                '⚠️ Usage callback triggered but data is incomplete:',
-                JSON.stringify(usageData)
-              )
-            }
-          }
-        )
-      } else if (accountType === 'claude-console') {
-        // Claude Console账号使用Console转发服务（需要传递accountId）
-        await claudeConsoleRelayService.relayStreamRequestWithUsageCapture(
-          req.body,
-          req.apiKey,
-          res,
-          req.headers,
-          (usageData) => {
-            // 回调函数：当检测到完整usage数据时记录真实token使用量
-            logger.info(
-              '🎯 Usage callback triggered with complete data:',
-              JSON.stringify(usageData, null, 2)
-            )
-
-            if (
-              usageData &&
-              usageData.input_tokens !== undefined &&
-              usageData.output_tokens !== undefined
-            ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
-
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
-
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
-
-              // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
-              const usageAccountId = usageData.accountId
-
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
-
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
-                }
-              }
-
-              apiKeyService
-                .recordUsageWithDetails(
-                  req.apiKey.id,
-                  usageObject,
-                  model,
-                  usageAccountId,
-                  'claude-console'
-                )
-                .catch((error) => {
-                  logger.error('❌ Failed to record stream usage:', error)
-                })
-
-              queueRateLimitUpdate(
-                req.rateLimitInfo,
-                {
-                  inputTokens,
-                  outputTokens,
-                  cacheCreateTokens,
-                  cacheReadTokens
-                },
-                model,
-                'claude-console-stream'
-              )
-
-              usageDataCaptured = true
-              logger.api(
-                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
-              )
-            } else {
-              logger.warn(
-                '⚠️ Usage callback triggered but data is incomplete:',
-                JSON.stringify(usageData)
-              )
-            }
-          },
-          accountId
-        )
-      } else if (accountType === 'bedrock') {
-        // Bedrock账号使用Bedrock转发服务
+      while (retryCount <= MAX_RETRIES) {
         try {
-          const bedrockAccountResult = await bedrockAccountService.getAccount(accountId)
-          if (!bedrockAccountResult.success) {
-            throw new Error('Failed to get Bedrock account details')
+          // 使用统一调度选择账号（传递请求的模型和排除的账户ID）
+          const requestedModel = req.body.model
+          try {
+            const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+              req.apiKey,
+              sessionHash,
+              requestedModel,
+              excludeAccountIds // 重试时排除失败的账户
+            )
+            ;({ accountId, accountType } = selection)
+          } catch (error) {
+            if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+              const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
+                error.rateLimitEndAt
+              )
+              res.status(403)
+              res.setHeader('Content-Type', 'application/json')
+              res.end(
+                JSON.stringify({
+                  error: 'upstream_rate_limited',
+                  message: limitMessage
+                })
+              )
+              return
+            }
+            throw error
           }
 
-          const result = await bedrockRelayService.handleStreamRequest(
-            req.body,
-            bedrockAccountResult.data,
-            res
-          )
-
-          // 记录Bedrock使用统计
-          if (result.usage) {
-            const inputTokens = result.usage.input_tokens || 0
-            const outputTokens = result.usage.output_tokens || 0
-
-            apiKeyService
-              .recordUsage(req.apiKey.id, inputTokens, outputTokens, 0, 0, result.model, accountId)
-              .catch((error) => {
-                logger.error('❌ Failed to record Bedrock stream usage:', error)
-              })
-
-            queueRateLimitUpdate(
-              req.rateLimitInfo,
-              {
-                inputTokens,
-                outputTokens,
-                cacheCreateTokens: 0,
-                cacheReadTokens: 0
-              },
-              result.model,
-              'bedrock-stream'
-            )
-
-            usageDataCaptured = true
-            logger.api(
-              `📊 Bedrock stream usage recorded - Model: ${result.model}, Input: ${inputTokens}, Output: ${outputTokens}, Total: ${inputTokens + outputTokens} tokens`
-            )
-          }
-        } catch (error) {
-          logger.error('❌ Bedrock stream request failed:', error)
+          // 在调用转发服务前设置流式响应头
           if (!res.headersSent) {
-            return res.status(500).json({ error: 'Bedrock service error', message: error.message })
+            res.setHeader('Content-Type', 'text/event-stream')
+            res.setHeader('Cache-Control', 'no-cache')
+            res.setHeader('Connection', 'keep-alive')
+            res.setHeader('Access-Control-Allow-Origin', '*')
+            res.setHeader('X-Accel-Buffering', 'no') // 禁用 Nginx 缓冲
           }
-          return undefined
-        }
-      } else if (accountType === 'ccr') {
-        // CCR账号使用CCR转发服务（需要传递accountId）
-        await ccrRelayService.relayStreamRequestWithUsageCapture(
-          req.body,
-          req.apiKey,
-          res,
-          req.headers,
-          (usageData) => {
-            // 回调函数：当检测到完整usage数据时记录真实token使用量
-            logger.info(
-              '🎯 CCR usage callback triggered with complete data:',
-              JSON.stringify(usageData, null, 2)
-            )
 
-            if (
-              usageData &&
-              usageData.input_tokens !== undefined &&
-              usageData.output_tokens !== undefined
-            ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
+          // 根据账号类型选择对应的转发服务并调用
+          if (accountType === 'claude-official') {
+            // 官方Claude账号使用原有的转发服务（会自己选择账号）
+            await claudeRelayService.relayStreamRequestWithUsageCapture(
+              req.body,
+              req.apiKey,
+              res,
+              req.headers,
+              (usageData) => {
+                // 回调函数：当检测到完整usage数据时记录真实token使用量
+                logger.info(
+                  '🎯 Usage callback triggered with complete data:',
+                  JSON.stringify(usageData, null, 2)
+                )
 
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
+                if (
+                  usageData &&
+                  usageData.input_tokens !== undefined &&
+                  usageData.output_tokens !== undefined
+                ) {
+                  const inputTokens = usageData.input_tokens || 0
+                  const outputTokens = usageData.output_tokens || 0
+                  // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
+                  let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
+                  let ephemeral5mTokens = 0
+                  let ephemeral1hTokens = 0
 
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
+                  if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
+                    ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
+                    ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
+                    // 总的缓存创建 tokens 是两者之和
+                    cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
+                  }
 
-              // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
-              const usageAccountId = usageData.accountId
+                  const cacheReadTokens = usageData.cache_read_input_tokens || 0
+                  const model = usageData.model || 'unknown'
 
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
+                  // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
+                  const { accountId: usageAccountId } = usageData
 
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
+                  // 构建 usage 对象以传递给 recordUsage
+                  const usageObject = {
+                    input_tokens: inputTokens,
+                    output_tokens: outputTokens,
+                    cache_creation_input_tokens: cacheCreateTokens,
+                    cache_read_input_tokens: cacheReadTokens
+                  }
+
+                  // 如果有详细的缓存创建数据，添加到 usage 对象中
+                  if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
+                    usageObject.cache_creation = {
+                      ephemeral_5m_input_tokens: ephemeral5mTokens,
+                      ephemeral_1h_input_tokens: ephemeral1hTokens
+                    }
+                  }
+
+                  apiKeyService
+                    .recordUsageWithDetails(
+                      req.apiKey.id,
+                      usageObject,
+                      model,
+                      usageAccountId,
+                      'claude'
+                    )
+                    .catch((error) => {
+                      logger.error('❌ Failed to record stream usage:', error)
+                    })
+
+                  queueRateLimitUpdate(
+                    req.rateLimitInfo,
+                    {
+                      inputTokens,
+                      outputTokens,
+                      cacheCreateTokens,
+                      cacheReadTokens
+                    },
+                    model,
+                    'claude-stream'
+                  )
+
+                  usageDataCaptured = true
+                  logger.api(
+                    `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                  )
+                } else {
+                  logger.warn(
+                    '⚠️ Usage callback triggered but data is incomplete:',
+                    JSON.stringify(usageData)
+                  )
                 }
               }
+            )
+          } else if (accountType === 'claude-console') {
+            // Claude Console账号使用Console转发服务（需要传递accountId）
+            await claudeConsoleRelayService.relayStreamRequestWithUsageCapture(
+              req.body,
+              req.apiKey,
+              res,
+              req.headers,
+              (usageData) => {
+                // 回调函数：当检测到完整usage数据时记录真实token使用量
+                logger.info(
+                  '🎯 Usage callback triggered with complete data:',
+                  JSON.stringify(usageData, null, 2)
+                )
 
-              apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'ccr')
-                .catch((error) => {
-                  logger.error('❌ Failed to record CCR stream usage:', error)
-                })
+                if (
+                  usageData &&
+                  usageData.input_tokens !== undefined &&
+                  usageData.output_tokens !== undefined
+                ) {
+                  const inputTokens = usageData.input_tokens || 0
+                  const outputTokens = usageData.output_tokens || 0
+                  // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
+                  let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
+                  let ephemeral5mTokens = 0
+                  let ephemeral1hTokens = 0
 
-              queueRateLimitUpdate(
-                req.rateLimitInfo,
-                {
-                  inputTokens,
-                  outputTokens,
-                  cacheCreateTokens,
-                  cacheReadTokens
-                },
-                model,
-                'ccr-stream'
+                  if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
+                    ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
+                    ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
+                    // 总的缓存创建 tokens 是两者之和
+                    cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
+                  }
+
+                  const cacheReadTokens = usageData.cache_read_input_tokens || 0
+                  const model = usageData.model || 'unknown'
+
+                  // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
+                  const usageAccountId = usageData.accountId
+
+                  // 构建 usage 对象以传递给 recordUsage
+                  const usageObject = {
+                    input_tokens: inputTokens,
+                    output_tokens: outputTokens,
+                    cache_creation_input_tokens: cacheCreateTokens,
+                    cache_read_input_tokens: cacheReadTokens
+                  }
+
+                  // 如果有详细的缓存创建数据，添加到 usage 对象中
+                  if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
+                    usageObject.cache_creation = {
+                      ephemeral_5m_input_tokens: ephemeral5mTokens,
+                      ephemeral_1h_input_tokens: ephemeral1hTokens
+                    }
+                  }
+
+                  apiKeyService
+                    .recordUsageWithDetails(
+                      req.apiKey.id,
+                      usageObject,
+                      model,
+                      usageAccountId,
+                      'claude-console'
+                    )
+                    .catch((error) => {
+                      logger.error('❌ Failed to record stream usage:', error)
+                    })
+
+                  queueRateLimitUpdate(
+                    req.rateLimitInfo,
+                    {
+                      inputTokens,
+                      outputTokens,
+                      cacheCreateTokens,
+                      cacheReadTokens
+                    },
+                    model,
+                    'claude-console-stream'
+                  )
+
+                  usageDataCaptured = true
+                  logger.api(
+                    `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                  )
+                } else {
+                  logger.warn(
+                    '⚠️ Usage callback triggered but data is incomplete:',
+                    JSON.stringify(usageData)
+                  )
+                }
+              },
+              accountId
+            )
+          } else if (accountType === 'bedrock') {
+            // Bedrock账号使用Bedrock转发服务
+            try {
+              const bedrockAccountResult = await bedrockAccountService.getAccount(accountId)
+              if (!bedrockAccountResult.success) {
+                throw new Error('Failed to get Bedrock account details')
+              }
+
+              const result = await bedrockRelayService.handleStreamRequest(
+                req.body,
+                bedrockAccountResult.data,
+                res
               )
 
-              usageDataCaptured = true
-              logger.api(
-                `📊 CCR stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
-              )
-            } else {
-              logger.warn(
-                '⚠️ CCR usage callback triggered but data is incomplete:',
-                JSON.stringify(usageData)
-              )
+              // 记录Bedrock使用统计
+              if (result.usage) {
+                const inputTokens = result.usage.input_tokens || 0
+                const outputTokens = result.usage.output_tokens || 0
+
+                apiKeyService
+                  .recordUsage(
+                    req.apiKey.id,
+                    inputTokens,
+                    outputTokens,
+                    0,
+                    0,
+                    result.model,
+                    accountId
+                  )
+                  .catch((error) => {
+                    logger.error('❌ Failed to record Bedrock stream usage:', error)
+                  })
+
+                queueRateLimitUpdate(
+                  req.rateLimitInfo,
+                  {
+                    inputTokens,
+                    outputTokens,
+                    cacheCreateTokens: 0,
+                    cacheReadTokens: 0
+                  },
+                  result.model,
+                  'bedrock-stream'
+                )
+
+                usageDataCaptured = true
+                logger.api(
+                  `📊 Bedrock stream usage recorded - Model: ${result.model}, Input: ${inputTokens}, Output: ${outputTokens}, Total: ${inputTokens + outputTokens} tokens`
+                )
+              }
+            } catch (error) {
+              logger.error('❌ Bedrock stream request failed:', error)
+              if (!res.headersSent) {
+                return res
+                  .status(500)
+                  .json({ error: 'Bedrock service error', message: error.message })
+              }
+              return undefined
             }
-          },
-          accountId
-        )
+          } else if (accountType === 'ccr') {
+            // CCR账号使用CCR转发服务（需要传递accountId）
+            await ccrRelayService.relayStreamRequestWithUsageCapture(
+              req.body,
+              req.apiKey,
+              res,
+              req.headers,
+              (usageData) => {
+                // 回调函数：当检测到完整usage数据时记录真实token使用量
+                logger.info(
+                  '🎯 CCR usage callback triggered with complete data:',
+                  JSON.stringify(usageData, null, 2)
+                )
+
+                if (
+                  usageData &&
+                  usageData.input_tokens !== undefined &&
+                  usageData.output_tokens !== undefined
+                ) {
+                  const inputTokens = usageData.input_tokens || 0
+                  const outputTokens = usageData.output_tokens || 0
+                  // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
+                  let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
+                  let ephemeral5mTokens = 0
+                  let ephemeral1hTokens = 0
+
+                  if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
+                    ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
+                    ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
+                    // 总的缓存创建 tokens 是两者之和
+                    cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
+                  }
+
+                  const cacheReadTokens = usageData.cache_read_input_tokens || 0
+                  const model = usageData.model || 'unknown'
+
+                  // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
+                  const usageAccountId = usageData.accountId
+
+                  // 构建 usage 对象以传递给 recordUsage
+                  const usageObject = {
+                    input_tokens: inputTokens,
+                    output_tokens: outputTokens,
+                    cache_creation_input_tokens: cacheCreateTokens,
+                    cache_read_input_tokens: cacheReadTokens
+                  }
+
+                  // 如果有详细的缓存创建数据，添加到 usage 对象中
+                  if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
+                    usageObject.cache_creation = {
+                      ephemeral_5m_input_tokens: ephemeral5mTokens,
+                      ephemeral_1h_input_tokens: ephemeral1hTokens
+                    }
+                  }
+
+                  apiKeyService
+                    .recordUsageWithDetails(
+                      req.apiKey.id,
+                      usageObject,
+                      model,
+                      usageAccountId,
+                      'ccr'
+                    )
+                    .catch((error) => {
+                      logger.error('❌ Failed to record CCR stream usage:', error)
+                    })
+
+                  queueRateLimitUpdate(
+                    req.rateLimitInfo,
+                    {
+                      inputTokens,
+                      outputTokens,
+                      cacheCreateTokens,
+                      cacheReadTokens
+                    },
+                    model,
+                    'ccr-stream'
+                  )
+
+                  usageDataCaptured = true
+                  logger.api(
+                    `📊 CCR stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                  )
+                } else {
+                  logger.warn(
+                    '⚠️ CCR usage callback triggered but data is incomplete:',
+                    JSON.stringify(usageData)
+                  )
+                }
+              },
+              accountId
+            )
+          }
+
+          // 🎯 流式请求成功，跳出重试循环
+          break
+        } catch (error) {
+          // 🆕 检查是否是 520 no body 错误
+          if (error.code === 'CLAUDE_CONSOLE_520_NO_BODY' && retryCount < MAX_RETRIES) {
+            logger.warn(
+              `⚠️ 流式请求首选账户 ${error.accountId} 发生 520 no body 错误，使用备用账户重试（第 ${retryCount + 1}/${MAX_RETRIES} 次尝试）`
+            )
+
+            // 将失败的账户ID添加到排除列表
+            excludeAccountIds.push(error.accountId)
+            logger.info(`🚫 已将账户 ${error.accountId} 添加到排除列表，重试时不会选择此账户`)
+
+            // 删除粘性会话映射，强制重新选择
+            if (sessionHash) {
+              await unifiedClaudeScheduler._deleteSessionMapping(sessionHash)
+              logger.info(`🗑️ 已删除粘性会话映射，将在重试时选择备用账户`)
+            }
+
+            retryCount++
+            continue // 进入下一次循环重试
+          }
+
+          // 其他错误或已达到最大重试次数，直接抛出
+          throw error
+        }
       }
 
       // 流式请求完成后 - 如果没有捕获到usage数据，记录警告但不进行估算
