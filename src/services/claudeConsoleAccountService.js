@@ -776,6 +776,104 @@ class ClaudeConsoleAccountService {
     }
   }
 
+  // 🚫 标记账号为 520 no body 错误状态
+  async markAccountNoBodyError(accountId) {
+    try {
+      const client = redis.getClientSafe()
+      const account = await this.getAccount(accountId)
+
+      if (!account) {
+        throw new Error('Account not found')
+      }
+
+      const updates = {
+        noBodyErrorAt: new Date().toISOString(),
+        noBodyErrorStatus: 'no_body_error',
+        errorMessage: '响应无内容（520 no body 错误）'
+      }
+
+      await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updates)
+
+      // 发送Webhook通知
+      try {
+        const webhookNotifier = require('../utils/webhookNotifier')
+        await webhookNotifier.sendAccountAnomalyNotification({
+          accountId,
+          accountName: account.name || 'Claude Console Account',
+          platform: 'claude-console',
+          status: 'error',
+          errorCode: 'CLAUDE_CONSOLE_NO_BODY',
+          reason: '首选账号返回520 no body错误，已切换到备用账号',
+          timestamp: new Date().toISOString()
+        })
+      } catch (webhookError) {
+        logger.error('Failed to send 520 no body webhook notification:', webhookError)
+      }
+
+      logger.warn(
+        `🚫 Claude Console account marked with 520 no body error: ${account.name} (${accountId})`
+      )
+      return { success: true }
+    } catch (error) {
+      logger.error(`❌ Failed to mark Claude Console account as no body error: ${accountId}`, error)
+      throw error
+    }
+  }
+
+  // ✅ 移除账号的 520 no body 错误状态
+  async removeAccountNoBodyError(accountId) {
+    try {
+      const client = redis.getClientSafe()
+
+      await client.hdel(
+        `${this.ACCOUNT_KEY_PREFIX}${accountId}`,
+        'noBodyErrorAt',
+        'noBodyErrorStatus'
+      )
+
+      logger.success(`✅ 520 no body error status removed for Claude Console account: ${accountId}`)
+      return { success: true }
+    } catch (error) {
+      logger.error(
+        `❌ Failed to remove 520 no body error status for Claude Console account: ${accountId}`,
+        error
+      )
+      throw error
+    }
+  }
+
+  // 🔍 检查账号是否处于 520 no body 错误状态
+  async isAccountNoBodyError(accountId) {
+    try {
+      const account = await this.getAccount(accountId)
+      if (!account) {
+        return false
+      }
+
+      if (account.noBodyErrorStatus === 'no_body_error' && account.noBodyErrorAt) {
+        const errorAt = new Date(account.noBodyErrorAt)
+        const now = new Date()
+        const minutesSinceError = (now - errorAt) / (1000 * 60)
+
+        // 520 错误状态持续 5 分钟后自动恢复
+        if (minutesSinceError >= 5) {
+          await this.removeAccountNoBodyError(accountId)
+          return false
+        }
+
+        return true
+      }
+
+      return false
+    } catch (error) {
+      logger.error(
+        `❌ Failed to check 520 no body error status for Claude Console account: ${accountId}`,
+        error
+      )
+      return false
+    }
+  }
+
   // 🚫 标记账号为封锁状态（模型不支持等原因）
   async blockAccount(accountId, reason) {
     try {

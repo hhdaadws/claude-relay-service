@@ -191,6 +191,24 @@ class ClaudeConsoleRelayService {
       } else if (response.status === 529) {
         logger.warn(`🚫 Overload error detected for Claude Console account ${accountId}`)
         await claudeConsoleAccountService.markAccountOverloaded(accountId)
+      } else if (response.status === 520) {
+        // 🆕 新增：检测 520 错误
+        const hasBody =
+          response.data &&
+          ((typeof response.data === 'string' && response.data.trim().length > 0) ||
+            (typeof response.data === 'object' && Object.keys(response.data).length > 0))
+
+        if (!hasBody) {
+          logger.warn(`🚫 520 no body error detected for Claude Console account ${accountId}`)
+          await claudeConsoleAccountService.markAccountNoBodyError(accountId)
+
+          // 🎯 抛出特殊错误，让上层路由重试
+          const error = new Error('520 no body error - retry with fallback account')
+          error.code = 'CLAUDE_CONSOLE_520_NO_BODY'
+          error.accountId = accountId
+          error.shouldRetry = true
+          throw error
+        }
       } else if (response.status === 200 || response.status === 201) {
         // 如果请求成功，检查并移除错误状态
         const isRateLimited = await claudeConsoleAccountService.isAccountRateLimited(accountId)
@@ -200,6 +218,11 @@ class ClaudeConsoleRelayService {
         const isOverloaded = await claudeConsoleAccountService.isAccountOverloaded(accountId)
         if (isOverloaded) {
           await claudeConsoleAccountService.removeAccountOverload(accountId)
+        }
+        // 🆕 新增：清除 520 错误状态
+        const isNoBodyError = await claudeConsoleAccountService.isAccountNoBodyError(accountId)
+        if (isNoBodyError) {
+          await claudeConsoleAccountService.removeAccountNoBodyError(accountId)
         }
       }
 

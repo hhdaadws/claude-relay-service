@@ -820,6 +820,11 @@ class UnifiedClaudeScheduler {
         if (await claudeConsoleAccountService.isAccountOverloaded(accountId)) {
           return false
         }
+        // 🆕 新增：检查是否处于 520 no body 错误状态
+        if (await claudeConsoleAccountService.isAccountNoBodyError(accountId)) {
+          logger.info(`🚫 Claude Console account ${accountId} skipped due to 520 no body error`)
+          return false
+        }
         return true
       } else if (accountType === 'bedrock') {
         const accountResult = await bedrockAccountService.getAccount(accountId)

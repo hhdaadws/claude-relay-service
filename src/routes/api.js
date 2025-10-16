@@ -483,106 +483,138 @@ async function handleMessagesRequest(req, res) {
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
 
-      // 使用统一调度选择账号（传递请求的模型）
-      const requestedModel = req.body.model
+      // 🆕 支持重试的账户选择和请求逻辑
+      let retryCount = 0
+      const MAX_RETRIES = 1 // 最多重试1次
+      let response
       let accountId
       let accountType
-      try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          req.apiKey,
-          sessionHash,
-          requestedModel
-        )
-        ;({ accountId, accountType } = selection)
-      } catch (error) {
-        if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
-            error.rateLimitEndAt
-          )
-          return res.status(403).json({
-            error: 'upstream_rate_limited',
-            message: limitMessage
-          })
-        }
-        throw error
-      }
 
-      // 根据账号类型选择对应的转发服务
-      let response
-      logger.debug(`[DEBUG] Request query params: ${JSON.stringify(req.query)}`)
-      logger.debug(`[DEBUG] Request URL: ${req.url}`)
-      logger.debug(`[DEBUG] Request path: ${req.path}`)
-
-      if (accountType === 'claude-official') {
-        // 官方Claude账号使用原有的转发服务
-        response = await claudeRelayService.relayRequest(
-          req.body,
-          req.apiKey,
-          req,
-          res,
-          req.headers
-        )
-      } else if (accountType === 'claude-console') {
-        // Claude Console账号使用Console转发服务
-        logger.debug(
-          `[DEBUG] Calling claudeConsoleRelayService.relayRequest with accountId: ${accountId}`
-        )
-        response = await claudeConsoleRelayService.relayRequest(
-          req.body,
-          req.apiKey,
-          req,
-          res,
-          req.headers,
-          accountId
-        )
-      } else if (accountType === 'bedrock') {
-        // Bedrock账号使用Bedrock转发服务
+      while (retryCount <= MAX_RETRIES) {
         try {
-          const bedrockAccountResult = await bedrockAccountService.getAccount(accountId)
-          if (!bedrockAccountResult.success) {
-            throw new Error('Failed to get Bedrock account details')
+          // 使用统一调度选择账号（传递请求的模型）
+          const requestedModel = req.body.model
+          try {
+            const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+              req.apiKey,
+              sessionHash,
+              requestedModel
+            )
+            ;({ accountId, accountType } = selection)
+          } catch (error) {
+            if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+              const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
+                error.rateLimitEndAt
+              )
+              return res.status(403).json({
+                error: 'upstream_rate_limited',
+                message: limitMessage
+              })
+            }
+            throw error
           }
 
-          const result = await bedrockRelayService.handleNonStreamRequest(
-            req.body,
-            bedrockAccountResult.data,
-            req.headers
-          )
+          // 根据账号类型选择对应的转发服务
+          logger.debug(`[DEBUG] Request query params: ${JSON.stringify(req.query)}`)
+          logger.debug(`[DEBUG] Request URL: ${req.url}`)
+          logger.debug(`[DEBUG] Request path: ${req.path}`)
 
-          // 构建标准响应格式
-          response = {
-            statusCode: result.success ? 200 : 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(result.success ? result.data : { error: result.error }),
-            accountId
+          if (accountType === 'claude-official') {
+            // 官方Claude账号使用原有的转发服务
+            response = await claudeRelayService.relayRequest(
+              req.body,
+              req.apiKey,
+              req,
+              res,
+              req.headers
+            )
+          } else if (accountType === 'claude-console') {
+            // Claude Console账号使用Console转发服务
+            logger.debug(
+              `[DEBUG] Calling claudeConsoleRelayService.relayRequest with accountId: ${accountId}`
+            )
+            response = await claudeConsoleRelayService.relayRequest(
+              req.body,
+              req.apiKey,
+              req,
+              res,
+              req.headers,
+              accountId
+            )
+          } else if (accountType === 'bedrock') {
+            // Bedrock账号使用Bedrock转发服务
+            try {
+              const bedrockAccountResult = await bedrockAccountService.getAccount(accountId)
+              if (!bedrockAccountResult.success) {
+                throw new Error('Failed to get Bedrock account details')
+              }
+
+              const result = await bedrockRelayService.handleNonStreamRequest(
+                req.body,
+                bedrockAccountResult.data,
+                req.headers
+              )
+
+              // 构建标准响应格式
+              response = {
+                statusCode: result.success ? 200 : 500,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(result.success ? result.data : { error: result.error }),
+                accountId
+              }
+
+              // 如果成功，添加使用统计到响应数据中
+              if (result.success && result.usage) {
+                const responseData = JSON.parse(response.body)
+                responseData.usage = result.usage
+                response.body = JSON.stringify(responseData)
+              }
+            } catch (error) {
+              logger.error('❌ Bedrock non-stream request failed:', error)
+              response = {
+                statusCode: 500,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ error: 'Bedrock service error', message: error.message }),
+                accountId
+              }
+            }
+          } else if (accountType === 'ccr') {
+            // CCR账号使用CCR转发服务
+            logger.debug(
+              `[DEBUG] Calling ccrRelayService.relayRequest with accountId: ${accountId}`
+            )
+            response = await ccrRelayService.relayRequest(
+              req.body,
+              req.apiKey,
+              req,
+              res,
+              req.headers,
+              accountId
+            )
           }
 
-          // 如果成功，添加使用统计到响应数据中
-          if (result.success && result.usage) {
-            const responseData = JSON.parse(response.body)
-            responseData.usage = result.usage
-            response.body = JSON.stringify(responseData)
-          }
+          // 🎯 请求成功，跳出重试循环
+          break
         } catch (error) {
-          logger.error('❌ Bedrock non-stream request failed:', error)
-          response = {
-            statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'Bedrock service error', message: error.message }),
-            accountId
+          // 🆕 检查是否是 520 no body 错误
+          if (error.code === 'CLAUDE_CONSOLE_520_NO_BODY' && retryCount < MAX_RETRIES) {
+            logger.warn(
+              `⚠️ 520 no body error on preferred account ${error.accountId}, retrying with fallback account (attempt ${retryCount + 1}/${MAX_RETRIES})`
+            )
+
+            // 删除粘性会话映射，强制重新选择
+            if (sessionHash) {
+              await unifiedClaudeScheduler._deleteSessionMapping(sessionHash)
+              logger.info(`🗑️ Deleted sticky session mapping for 520 error retry`)
+            }
+
+            retryCount++
+            continue // 进入下一次循环重试
           }
+
+          // 其他错误或已达到最大重试次数，直接抛出
+          throw error
         }
-      } else if (accountType === 'ccr') {
-        // CCR账号使用CCR转发服务
-        logger.debug(`[DEBUG] Calling ccrRelayService.relayRequest with accountId: ${accountId}`)
-        response = await ccrRelayService.relayRequest(
-          req.body,
-          req.apiKey,
-          req,
-          res,
-          req.headers,
-          accountId
-        )
       }
 
       logger.info('📡 Claude API response received', {
