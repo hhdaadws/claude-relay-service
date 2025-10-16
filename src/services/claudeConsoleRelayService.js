@@ -199,11 +199,28 @@ class ClaudeConsoleRelayService {
             (typeof response.data === 'object' && Object.keys(response.data).length > 0))
 
         if (!hasBody) {
-          logger.warn(`🚫 520 no body error detected for Claude Console account ${accountId}`)
-          await claudeConsoleAccountService.markAccountNoBodyError(accountId)
+          logger.warn(
+            `🚫 检测到 Claude Console 账户 ${accountId} 的 520 no body 错误，尝试切换到备用账户`
+          )
 
-          // 🎯 抛出特殊错误，让上层路由重试
-          const error = new Error('520 no body error - retry with fallback account')
+          // 📢 发送 webhook 通知（但不标记账户为不可用）
+          try {
+            const webhookNotifier = require('../utils/webhookNotifier')
+            await webhookNotifier.sendAccountAnomalyNotification({
+              accountId,
+              accountName: account.name || 'Claude Console Account',
+              platform: 'claude-console',
+              status: 'warning',
+              errorCode: 'CLAUDE_CONSOLE_520_NO_BODY',
+              reason: '账户返回 520 no body 错误，已切换到备用账户重试。账户仍保持可用状态。',
+              timestamp: new Date().toISOString()
+            })
+          } catch (webhookError) {
+            logger.error('发送 520 no body Webhook 通知失败:', webhookError)
+          }
+
+          // 🎯 抛出特殊错误，让上层路由重试到备用账户（但不禁用当前账户）
+          const error = new Error('520 no body 错误 - 使用备用账户重试')
           error.code = 'CLAUDE_CONSOLE_520_NO_BODY'
           error.accountId = accountId
           error.shouldRetry = true
@@ -219,11 +236,7 @@ class ClaudeConsoleRelayService {
         if (isOverloaded) {
           await claudeConsoleAccountService.removeAccountOverload(accountId)
         }
-        // 🆕 新增：清除 520 错误状态
-        const isNoBodyError = await claudeConsoleAccountService.isAccountNoBodyError(accountId)
-        if (isNoBodyError) {
-          await claudeConsoleAccountService.removeAccountNoBodyError(accountId)
-        }
+        // 注意：520 错误不会标记账户状态，因此这里不需要清除
       }
 
       // 更新最后使用时间

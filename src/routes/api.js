@@ -599,13 +599,13 @@ async function handleMessagesRequest(req, res) {
           // 🆕 检查是否是 520 no body 错误
           if (error.code === 'CLAUDE_CONSOLE_520_NO_BODY' && retryCount < MAX_RETRIES) {
             logger.warn(
-              `⚠️ 520 no body error on preferred account ${error.accountId}, retrying with fallback account (attempt ${retryCount + 1}/${MAX_RETRIES})`
+              `⚠️ 首选账户 ${error.accountId} 发生 520 no body 错误，使用备用账户重试（第 ${retryCount + 1}/${MAX_RETRIES} 次尝试）`
             )
 
             // 删除粘性会话映射，强制重新选择
             if (sessionHash) {
               await unifiedClaudeScheduler._deleteSessionMapping(sessionHash)
-              logger.info(`🗑️ Deleted sticky session mapping for 520 error retry`)
+              logger.info(`🗑️ 已删除粘性会话映射，将在重试时选择备用账户`)
             }
 
             retryCount++

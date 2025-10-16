@@ -27,10 +27,7 @@ class ClaudeConsoleAccountService {
     setInterval(
       () => {
         this._decryptCache.cleanup()
-        logger.info(
-          '🧹 Claude Console decrypt cache cleanup completed',
-          this._decryptCache.getStats()
-        )
+        logger.info('🧹 Claude Console 解密缓存清理完成', this._decryptCache.getStats())
       },
       10 * 60 * 1000
     )
@@ -57,7 +54,7 @@ class ClaudeConsoleAccountService {
 
     // 验证必填字段
     if (!apiUrl || !apiKey) {
-      throw new Error('API URL and API Key are required for Claude Console account')
+      throw new Error('Claude Console 账户需要 API URL 和 API Key')
     }
 
     const accountId = uuidv4()
@@ -115,7 +112,7 @@ class ClaudeConsoleAccountService {
       await client.sadd(this.SHARED_ACCOUNTS_KEY, accountId)
     }
 
-    logger.success(`🏢 Created Claude Console account: ${name} (${accountId})`)
+    logger.success(`🏢 创建 Claude Console 账户成功: ${name} (${accountId})`)
 
     return {
       id: accountId,
@@ -189,7 +186,7 @@ class ClaudeConsoleAccountService {
 
       return accounts
     } catch (error) {
-      logger.error('❌ Failed to get Claude Console accounts:', error)
+      logger.error('❌ 获取 Claude Console 账户失败:', error)
       throw error
     }
   }
@@ -245,7 +242,7 @@ class ClaudeConsoleAccountService {
     try {
       const existingAccount = await this.getAccount(accountId)
       if (!existingAccount) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       const client = redis.getClientSafe()
@@ -304,9 +301,9 @@ class ClaudeConsoleAccountService {
 
         // 记录日志
         if (updates.schedulable === true || updates.schedulable === 'true') {
-          logger.info(`✅ Manually enabled scheduling for Claude Console account ${accountId}`)
+          logger.info(`✅ 手动启用 Claude Console 账户调度 ${accountId}`)
         } else {
-          logger.info(`⛔ Manually disabled scheduling for Claude Console account ${accountId}`)
+          logger.info(`⛔ 手动禁用 Claude Console 账户调度 ${accountId}`)
         }
       }
 
@@ -352,17 +349,14 @@ class ClaudeConsoleAccountService {
           const webhookNotifier = require('../utils/webhookNotifier')
           await webhookNotifier.sendAccountAnomalyNotification({
             accountId,
-            accountName: updatedData.name || existingAccount.name || 'Unknown Account',
+            accountName: updatedData.name || existingAccount.name || '未知账户',
             platform: 'claude-console',
             status: 'disabled',
             errorCode: 'CLAUDE_CONSOLE_MANUALLY_DISABLED',
-            reason: 'Account manually disabled by administrator'
+            reason: '账户已被管理员手动禁用'
           })
         } catch (webhookError) {
-          logger.error(
-            'Failed to send webhook notification for manual account disable:',
-            webhookError
-          )
+          logger.error('手动禁用账户时发送 Webhook 通知失败:', webhookError)
         }
       }
 
@@ -371,11 +365,11 @@ class ClaudeConsoleAccountService {
 
       await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updatedData)
 
-      logger.success(`📝 Updated Claude Console account: ${accountId}`)
+      logger.success(`📝 更新 Claude Console 账户成功: ${accountId}`)
 
       return { success: true }
     } catch (error) {
-      logger.error('❌ Failed to update Claude Console account:', error)
+      logger.error('❌ 更新 Claude Console 账户失败:', error)
       throw error
     }
   }
@@ -387,7 +381,7 @@ class ClaudeConsoleAccountService {
       const account = await this.getAccount(accountId)
 
       if (!account) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       // 从Redis删除
@@ -398,11 +392,11 @@ class ClaudeConsoleAccountService {
         await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
       }
 
-      logger.success(`🗑️ Deleted Claude Console account: ${accountId}`)
+      logger.success(`🗑️ 删除 Claude Console 账户成功: ${accountId}`)
 
       return { success: true }
     } catch (error) {
-      logger.error('❌ Failed to delete Claude Console account:', error)
+      logger.error('❌ 删除 Claude Console 账户失败:', error)
       throw error
     }
   }
@@ -414,13 +408,13 @@ class ClaudeConsoleAccountService {
       const account = await this.getAccount(accountId)
 
       if (!account) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       // 如果限流时间设置为 0，表示不启用限流机制，直接返回
       if (account.rateLimitDuration === 0) {
         logger.info(
-          `ℹ️ Claude Console account ${account.name} (${accountId}) has rate limiting disabled, skipping rate limit`
+          `ℹ️ Claude Console 账户 ${account.name} (${accountId}) 已禁用限流机制，跳过限流处理`
         )
         return { success: true, skipped: true }
       }
@@ -430,7 +424,7 @@ class ClaudeConsoleAccountService {
         rateLimitStatus: 'limited',
         isActive: 'false', // 禁用账户
         schedulable: 'false', // 停止调度，与其他平台保持一致
-        errorMessage: `Rate limited at ${new Date().toISOString()}`,
+        errorMessage: `已被限流于 ${new Date().toISOString()}`,
         // 使用独立的限流自动停止标记
         rateLimitAutoStopped: 'true'
       }
@@ -454,19 +448,17 @@ class ClaudeConsoleAccountService {
           platform: 'claude-console',
           status: 'error',
           errorCode: 'CLAUDE_CONSOLE_RATE_LIMITED',
-          reason: `Account rate limited (429 error) and has been disabled. ${account.rateLimitDuration ? `Will be automatically re-enabled after ${account.rateLimitDuration} minutes` : 'Manual intervention required to re-enable'}`,
+          reason: `账户被限流（429 错误）已被禁用。${account.rateLimitDuration ? `将在 ${account.rateLimitDuration} 分钟后自动重新启用` : '需要手动重新启用'}`,
           timestamp: getISOStringWithTimezone(new Date())
         })
       } catch (webhookError) {
-        logger.error('Failed to send rate limit webhook notification:', webhookError)
+        logger.error('发送限流 Webhook 通知失败:', webhookError)
       }
 
-      logger.warn(
-        `🚫 Claude Console account marked as rate limited: ${account.name} (${accountId})`
-      )
+      logger.warn(`🚫 Claude Console 账户已标记为限流: ${account.name} (${accountId})`)
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to mark Claude Console account as rate limited: ${accountId}`, error)
+      logger.error(`❌ 标记 Claude Console 账户为限流状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -495,7 +487,7 @@ class ClaudeConsoleAccountService {
             status: 'quota_exceeded'
             // isActive保持false
           })
-          logger.info(`⚠️ Rate limit removed but quota exceeded remains for account: ${accountId}`)
+          logger.info(`⚠️ 已移除限流状态，但账户额度仍然超限: ${accountId}`)
         } else {
           // 没有额度限制，完全恢复
           const accountData = await client.hgetall(accountKey)
@@ -510,9 +502,7 @@ class ClaudeConsoleAccountService {
           // 只恢复因限流而自动停止的账户
           if (hadAutoStop && accountData.schedulable === 'false') {
             updateData.schedulable = 'true' // 恢复调度
-            logger.info(
-              `✅ Auto-resuming scheduling for Claude Console account ${accountId} after rate limit cleared`
-            )
+            logger.info(`✅ 限流清除后自动恢复 Claude Console 账户调度 ${accountId}`)
           }
 
           if (hadAutoStop) {
@@ -520,20 +510,18 @@ class ClaudeConsoleAccountService {
           }
 
           await client.hset(accountKey, updateData)
-          logger.success(`✅ Rate limit removed and account re-enabled: ${accountId}`)
+          logger.success(`✅ 已移除限流状态并重新启用账户: ${accountId}`)
         }
       } else {
         if (await client.hdel(accountKey, 'rateLimitAutoStopped')) {
-          logger.info(
-            `ℹ️ Removed stale auto-stop flag for Claude Console account ${accountId} during rate limit recovery`
-          )
+          logger.info(`ℹ️ 限流恢复期间移除 Claude Console 账户 ${accountId} 的过期自动停止标记`)
         }
-        logger.success(`✅ Rate limit removed for Claude Console account: ${accountId}`)
+        logger.success(`✅ 已移除 Claude Console 账户限流状态: ${accountId}`)
       }
 
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to remove rate limit for Claude Console account: ${accountId}`, error)
+      logger.error(`❌ 移除 Claude Console 账户限流状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -572,10 +560,7 @@ class ClaudeConsoleAccountService {
 
       return false
     } catch (error) {
-      logger.error(
-        `❌ Failed to check rate limit status for Claude Console account: ${accountId}`,
-        error
-      )
+      logger.error(`❌ 检查 Claude Console 账户限流状态失败: ${accountId}`, error)
       return false
     }
   }
@@ -645,7 +630,7 @@ class ClaudeConsoleAccountService {
       const account = await this.getAccount(accountId)
 
       if (!account) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       const updates = {
@@ -671,15 +656,13 @@ class ClaudeConsoleAccountService {
           timestamp: new Date().toISOString()
         })
       } catch (webhookError) {
-        logger.error('Failed to send unauthorized webhook notification:', webhookError)
+        logger.error('发送未授权 Webhook 通知失败:', webhookError)
       }
 
-      logger.warn(
-        `🚫 Claude Console account marked as unauthorized: ${account.name} (${accountId})`
-      )
+      logger.warn(`🚫 Claude Console 账户已标记为未授权: ${account.name} (${accountId})`)
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to mark Claude Console account as unauthorized: ${accountId}`, error)
+      logger.error(`❌ 标记 Claude Console 账户为未授权状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -691,7 +674,7 @@ class ClaudeConsoleAccountService {
       const account = await this.getAccount(accountId)
 
       if (!account) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       const updates = {
@@ -715,13 +698,13 @@ class ClaudeConsoleAccountService {
           timestamp: new Date().toISOString()
         })
       } catch (webhookError) {
-        logger.error('Failed to send overload webhook notification:', webhookError)
+        logger.error('发送过载 Webhook 通知失败:', webhookError)
       }
 
-      logger.warn(`🚫 Claude Console account marked as overloaded: ${account.name} (${accountId})`)
+      logger.warn(`🚫 Claude Console 账户已标记为过载: ${account.name} (${accountId})`)
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to mark Claude Console account as overloaded: ${accountId}`, error)
+      logger.error(`❌ 标记 Claude Console 账户为过载状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -733,13 +716,10 @@ class ClaudeConsoleAccountService {
 
       await client.hdel(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, 'overloadedAt', 'overloadStatus')
 
-      logger.success(`✅ Overload status removed for Claude Console account: ${accountId}`)
+      logger.success(`✅ 已移除 Claude Console 账户过载状态: ${accountId}`)
       return { success: true }
     } catch (error) {
-      logger.error(
-        `❌ Failed to remove overload status for Claude Console account: ${accountId}`,
-        error
-      )
+      logger.error(`❌ 移除 Claude Console 账户过载状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -768,10 +748,7 @@ class ClaudeConsoleAccountService {
 
       return false
     } catch (error) {
-      logger.error(
-        `❌ Failed to check overload status for Claude Console account: ${accountId}`,
-        error
-      )
+      logger.error(`❌ 检查 Claude Console 账户过载状态失败: ${accountId}`, error)
       return false
     }
   }
@@ -783,7 +760,7 @@ class ClaudeConsoleAccountService {
       const account = await this.getAccount(accountId)
 
       if (!account) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       const updates = {
@@ -807,15 +784,13 @@ class ClaudeConsoleAccountService {
           timestamp: new Date().toISOString()
         })
       } catch (webhookError) {
-        logger.error('Failed to send 520 no body webhook notification:', webhookError)
+        logger.error('发送 520 no body Webhook 通知失败:', webhookError)
       }
 
-      logger.warn(
-        `🚫 Claude Console account marked with 520 no body error: ${account.name} (${accountId})`
-      )
+      logger.warn(`🚫 Claude Console 账户已标记为 520 no body 错误: ${account.name} (${accountId})`)
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to mark Claude Console account as no body error: ${accountId}`, error)
+      logger.error(`❌ 标记 Claude Console 账户为 520 no body 错误失败: ${accountId}`, error)
       throw error
     }
   }
@@ -831,13 +806,10 @@ class ClaudeConsoleAccountService {
         'noBodyErrorStatus'
       )
 
-      logger.success(`✅ 520 no body error status removed for Claude Console account: ${accountId}`)
+      logger.success(`✅ 已移除 Claude Console 账户 520 no body 错误状态: ${accountId}`)
       return { success: true }
     } catch (error) {
-      logger.error(
-        `❌ Failed to remove 520 no body error status for Claude Console account: ${accountId}`,
-        error
-      )
+      logger.error(`❌ 移除 Claude Console 账户 520 no body 错误状态失败: ${accountId}`, error)
       throw error
     }
   }
@@ -866,10 +838,7 @@ class ClaudeConsoleAccountService {
 
       return false
     } catch (error) {
-      logger.error(
-        `❌ Failed to check 520 no body error status for Claude Console account: ${accountId}`,
-        error
-      )
+      logger.error(`❌ 检查 Claude Console 账户 520 no body 错误状态失败: ${accountId}`, error)
       return false
     }
   }
@@ -890,7 +859,7 @@ class ClaudeConsoleAccountService {
 
       await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updates)
 
-      logger.warn(`🚫 Claude Console account blocked: ${accountId} - ${reason}`)
+      logger.warn(`🚫 Claude Console 账户已封锁: ${accountId} - ${reason}`)
 
       // 发送Webhook通知
       if (accountData && Object.keys(accountData).length > 0) {
@@ -898,20 +867,20 @@ class ClaudeConsoleAccountService {
           const webhookNotifier = require('../utils/webhookNotifier')
           await webhookNotifier.sendAccountAnomalyNotification({
             accountId,
-            accountName: accountData.name || 'Unknown Account',
+            accountName: accountData.name || '未知账户',
             platform: 'claude-console',
             status: 'blocked',
             errorCode: 'CLAUDE_CONSOLE_BLOCKED',
             reason
           })
         } catch (webhookError) {
-          logger.error('Failed to send webhook notification:', webhookError)
+          logger.error('发送 Webhook 通知失败:', webhookError)
         }
       }
 
       return { success: true }
     } catch (error) {
-      logger.error(`❌ Failed to block Claude Console account: ${accountId}`, error)
+      logger.error(`❌ 封锁 Claude Console 账户失败: ${accountId}`, error)
       throw error
     }
   }
@@ -921,12 +890,12 @@ class ClaudeConsoleAccountService {
     const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
     if (proxyAgent) {
       logger.info(
-        `🌐 Using proxy for Claude Console request: ${ProxyHelper.getProxyDescription(proxyConfig)}`
+        `🌐 为 Claude Console 请求使用代理: ${ProxyHelper.getProxyDescription(proxyConfig)}`
       )
     } else if (proxyConfig) {
-      logger.debug('🌐 Failed to create proxy agent for Claude Console')
+      logger.debug('🌐 创建 Claude Console 代理 agent 失败')
     } else {
-      logger.debug('🌐 No proxy configured for Claude Console request')
+      logger.debug('🌐 Claude Console 请求未配置代理')
     }
     return proxyAgent
   }
@@ -947,7 +916,7 @@ class ClaudeConsoleAccountService {
 
       return `${iv.toString('hex')}:${encrypted}`
     } catch (error) {
-      logger.error('❌ Encryption error:', error)
+      logger.error('❌ 加密错误:', error)
       return data
     }
   }
@@ -991,7 +960,7 @@ class ClaudeConsoleAccountService {
 
       return encryptedData
     } catch (error) {
-      logger.error('❌ Decryption error:', error)
+      logger.error('❌ 解密错误:', error)
       return encryptedData
     }
   }
@@ -1009,7 +978,7 @@ class ClaudeConsoleAccountService {
         this.ENCRYPTION_SALT,
         32
       )
-      logger.info('🔑 Console encryption key derived and cached for performance optimization')
+      logger.info('🔑 Console 加密密钥已派生并缓存以优化性能')
     }
     return this._encryptionKeyCache
   }
@@ -1113,7 +1082,7 @@ class ClaudeConsoleAccountService {
       // 获取账户配置
       const accountData = await this.getAccount(accountId)
       if (!accountData) {
-        logger.warn(`Account not found: ${accountId}`)
+        logger.warn(`账户不存在: ${accountId}`)
         return
       }
 
@@ -1169,14 +1138,14 @@ class ClaudeConsoleAccountService {
           const webhookNotifier = require('../utils/webhookNotifier')
           await webhookNotifier.sendAccountAnomalyNotification({
             accountId,
-            accountName: accountData.name || 'Unknown Account',
+            accountName: accountData.name || '未知账户',
             platform: 'claude-console',
             status: 'quota_exceeded',
             errorCode: 'CLAUDE_CONSOLE_QUOTA_EXCEEDED',
-            reason: `Daily quota exceeded: $${currentDailyCost.toFixed(2)} / $${dailyQuota.toFixed(2)}`
+            reason: `每日额度已超限: $${currentDailyCost.toFixed(2)} / $${dailyQuota.toFixed(2)}`
           })
         } catch (webhookError) {
-          logger.error('Failed to send webhook notification for quota exceeded:', webhookError)
+          logger.error('发送额度超限 Webhook 通知失败:', webhookError)
         }
       }
 
@@ -1184,7 +1153,7 @@ class ClaudeConsoleAccountService {
         `💰 Quota check for account ${accountId}: $${currentDailyCost.toFixed(4)} / $${dailyQuota.toFixed(2)}`
       )
     } catch (error) {
-      logger.error('Failed to check quota usage:', error)
+      logger.error('检查配额使用失败:', error)
     }
   }
 
@@ -1233,9 +1202,9 @@ class ClaudeConsoleAccountService {
 
       await this.updateAccount(accountId, updates)
 
-      logger.debug(`🔄 Reset daily usage for account ${accountId}`)
+      logger.debug(`🔄 重置账户每日使用量 ${accountId}`)
     } catch (error) {
-      logger.error('Failed to reset daily usage:', error)
+      logger.error('重置每日使用量失败:', error)
     }
   }
 
@@ -1255,9 +1224,9 @@ class ClaudeConsoleAccountService {
         }
       }
 
-      logger.success(`✅ Reset daily usage for ${resetCount} Claude Console accounts`)
+      logger.success(`✅ 已重置 ${resetCount} 个 Claude Console 账户的每日使用量`)
     } catch (error) {
-      logger.error('Failed to reset all daily usage:', error)
+      logger.error('重置所有账户每日使用量失败:', error)
     }
   }
 
@@ -1288,7 +1257,7 @@ class ClaudeConsoleAccountService {
         fullUsageStats: usageStats
       }
     } catch (error) {
-      logger.error('Failed to get account usage stats:', error)
+      logger.error('获取账户使用统计失败:', error)
       return null
     }
   }
@@ -1298,7 +1267,7 @@ class ClaudeConsoleAccountService {
     try {
       const accountData = await this.getAccount(accountId)
       if (!accountData) {
-        throw new Error('Account not found')
+        throw new Error('账户不存在')
       }
 
       const client = redis.getClientSafe()
@@ -1328,7 +1297,7 @@ class ClaudeConsoleAccountService {
       await client.hset(accountKey, updates)
       await client.hdel(accountKey, ...fieldsToDelete)
 
-      logger.success(`✅ Reset all error status for Claude Console account ${accountId}`)
+      logger.success(`✅ 已重置 Claude Console 账户所有错误状态 ${accountId}`)
 
       // 发送 Webhook 通知
       try {
@@ -1339,16 +1308,16 @@ class ClaudeConsoleAccountService {
           platform: 'claude-console',
           status: 'recovered',
           errorCode: 'STATUS_RESET',
-          reason: 'Account status manually reset',
+          reason: '账户状态已手动重置',
           timestamp: new Date().toISOString()
         })
       } catch (webhookError) {
-        logger.warn('Failed to send webhook notification:', webhookError)
+        logger.warn('发送 Webhook 通知失败:', webhookError)
       }
 
       return { success: true, accountId }
     } catch (error) {
-      logger.error(`❌ Failed to reset Claude Console account status: ${accountId}`, error)
+      logger.error(`❌ 重置 Claude Console 账户状态失败: ${accountId}`, error)
       throw error
     }
   }

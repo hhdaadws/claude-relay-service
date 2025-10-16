@@ -155,7 +155,7 @@ class UnifiedClaudeScheduler {
 
       // 如果是 CCR 前缀，只在 CCR 账户池中选择
       if (vendor === 'ccr') {
-        logger.info(`🎯 CCR vendor prefix detected, routing to CCR accounts only`)
+        logger.info(`🎯 检测到 CCR 供应商前缀，仅路由到 CCR 账户`)
         return await this._selectCcrAccount(apiKeyData, sessionHash, effectiveModel)
       }
       // 如果API Key绑定了专属账户或分组，优先使用
@@ -163,9 +163,7 @@ class UnifiedClaudeScheduler {
         // 检查是否是分组
         if (apiKeyData.claudeAccountId.startsWith('group:')) {
           const groupId = apiKeyData.claudeAccountId.replace('group:', '')
-          logger.info(
-            `🎯 API key ${apiKeyData.name} is bound to group ${groupId}, selecting from group`
-          )
+          logger.info(`🎯 API Key ${apiKeyData.name} 已绑定到分组 ${groupId}，从分组中选择账户`)
           return await this.selectAccountFromGroup(
             groupId,
             sessionHash,
@@ -180,7 +178,7 @@ class UnifiedClaudeScheduler {
           const isRateLimited = await claudeAccountService.isAccountRateLimited(boundAccount.id)
           if (isRateLimited) {
             const rateInfo = await claudeAccountService.getAccountRateLimitInfo(boundAccount.id)
-            const error = new Error('Dedicated Claude account is rate limited')
+            const error = new Error('专属 Claude 账户已被限流')
             error.code = 'CLAUDE_DEDICATED_RATE_LIMITED'
             error.accountId = boundAccount.id
             error.rateLimitEndAt = rateInfo?.rateLimitEndAt || boundAccount.rateLimitEndAt || null
@@ -189,14 +187,14 @@ class UnifiedClaudeScheduler {
 
           if (!this._isSchedulable(boundAccount.schedulable)) {
             logger.warn(
-              `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not schedulable (schedulable: ${boundAccount?.schedulable}), falling back to pool`
+              `⚠️ 绑定的 Claude OAuth 账户 ${apiKeyData.claudeAccountId} 不可调度 (schedulable: ${boundAccount?.schedulable})，回退到账户池`
             )
           } else {
             if (isOpusRequest) {
               await claudeAccountService.clearExpiredOpusRateLimit(boundAccount.id)
             }
             logger.info(
-              `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId}) for API key ${apiKeyData.name}`
+              `🎯 使用绑定的专属 Claude OAuth 账户: ${boundAccount.name} (${apiKeyData.claudeAccountId}) 为 API Key ${apiKeyData.name}`
             )
             return {
               accountId: apiKeyData.claudeAccountId,
@@ -205,7 +203,7 @@ class UnifiedClaudeScheduler {
           }
         } else {
           logger.warn(
-            `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not available (isActive: ${boundAccount?.isActive}, status: ${boundAccount?.status}), falling back to pool`
+            `⚠️ 绑定的 Claude OAuth 账户 ${apiKeyData.claudeAccountId} 不可用 (isActive: ${boundAccount?.isActive}, status: ${boundAccount?.status})，回退到账户池`
           )
         }
       }
@@ -222,7 +220,7 @@ class UnifiedClaudeScheduler {
           this._isSchedulable(boundConsoleAccount.schedulable)
         ) {
           logger.info(
-            `🎯 Using bound dedicated Claude Console account: ${boundConsoleAccount.name} (${apiKeyData.claudeConsoleAccountId}) for API key ${apiKeyData.name}`
+            `🎯 使用绑定的专属 Claude Console 账户: ${boundConsoleAccount.name} (${apiKeyData.claudeConsoleAccountId}) 为 API Key ${apiKeyData.name}`
           )
           return {
             accountId: apiKeyData.claudeConsoleAccountId,
@@ -230,7 +228,7 @@ class UnifiedClaudeScheduler {
           }
         } else {
           logger.warn(
-            `⚠️ Bound Claude Console account ${apiKeyData.claudeConsoleAccountId} is not available (isActive: ${boundConsoleAccount?.isActive}, status: ${boundConsoleAccount?.status}, schedulable: ${boundConsoleAccount?.schedulable}), falling back to pool`
+            `⚠️ 绑定的 Claude Console 账户 ${apiKeyData.claudeConsoleAccountId} 不可用 (isActive: ${boundConsoleAccount?.isActive}, status: ${boundConsoleAccount?.status}, schedulable: ${boundConsoleAccount?.schedulable})，回退到账户池`
           )
         }
       }
@@ -246,7 +244,7 @@ class UnifiedClaudeScheduler {
           this._isSchedulable(boundBedrockAccountResult.data.schedulable)
         ) {
           logger.info(
-            `🎯 Using bound dedicated Bedrock account: ${boundBedrockAccountResult.data.name} (${apiKeyData.bedrockAccountId}) for API key ${apiKeyData.name}`
+            `🎯 使用绑定的专属 Bedrock 账户: ${boundBedrockAccountResult.data.name} (${apiKeyData.bedrockAccountId}) 为 API Key ${apiKeyData.name}`
           )
           return {
             accountId: apiKeyData.bedrockAccountId,
@@ -254,7 +252,7 @@ class UnifiedClaudeScheduler {
           }
         } else {
           logger.warn(
-            `⚠️ Bound Bedrock account ${apiKeyData.bedrockAccountId} is not available (isActive: ${boundBedrockAccountResult?.data?.isActive}, schedulable: ${boundBedrockAccountResult?.data?.schedulable}), falling back to pool`
+            `⚠️ 绑定的 Bedrock 账户 ${apiKeyData.bedrockAccountId} 不可用 (isActive: ${boundBedrockAccountResult?.data?.isActive}, schedulable: ${boundBedrockAccountResult?.data?.schedulable})，回退到账户池`
           )
         }
       }
@@ -267,9 +265,7 @@ class UnifiedClaudeScheduler {
         if (mappedAccount) {
           // 当本次请求不是 CCR 前缀时，不允许使用指向 CCR 的粘性会话映射
           if (vendor !== 'ccr' && mappedAccount.accountType === 'ccr') {
-            logger.info(
-              `ℹ️ Skipping CCR sticky session mapping for non-CCR request; removing mapping for session ${sessionHash}`
-            )
+            logger.info(`ℹ️ 非 CCR 请求跳过 CCR 粘性会话映射；移除会话 ${sessionHash} 的映射`)
             await this._deleteSessionMapping(sessionHash)
           } else {
             // 验证映射的账户是否仍然可用
@@ -282,13 +278,11 @@ class UnifiedClaudeScheduler {
               // 🚀 智能会话续期：剩余时间少于14天时自动续期到15天（续期正确的 unified 映射键）
               await this._extendSessionMappingTTL(sessionHash)
               logger.info(
-                `🎯 Using sticky session account: ${mappedAccount.accountId} (${mappedAccount.accountType}) for session ${sessionHash}`
+                `🎯 使用粘性会话账户: ${mappedAccount.accountId} (${mappedAccount.accountType}) 为会话 ${sessionHash}`
               )
               return mappedAccount
             } else {
-              logger.warn(
-                `⚠️ Mapped account ${mappedAccount.accountId} is no longer available, selecting new account`
-              )
+              logger.warn(`⚠️ 映射的账户 ${mappedAccount.accountId} 不再可用，选择新账户`)
               await this._deleteSessionMapping(sessionHash)
             }
           }
@@ -305,11 +299,9 @@ class UnifiedClaudeScheduler {
       if (availableAccounts.length === 0) {
         // 提供更详细的错误信息
         if (effectiveModel) {
-          throw new Error(
-            `No available Claude accounts support the requested model: ${effectiveModel}`
-          )
+          throw new Error(`没有可用的 Claude 账户支持请求的模型: ${effectiveModel}`)
         } else {
-          throw new Error('No available Claude accounts (neither official nor console)')
+          throw new Error('没有可用的 Claude 账户（官方和 Console 均无）')
         }
       }
 
@@ -327,12 +319,12 @@ class UnifiedClaudeScheduler {
           selectedAccount.accountType
         )
         logger.info(
-          `🎯 Created new sticky session mapping: ${selectedAccount.name} (${selectedAccount.accountId}, ${selectedAccount.accountType}) for session ${sessionHash}`
+          `🎯 创建新的粘性会话映射: ${selectedAccount.name} (${selectedAccount.accountId}, ${selectedAccount.accountType}) 为会话 ${sessionHash}`
         )
       }
 
       logger.info(
-        `🎯 Selected account: ${selectedAccount.name} (${selectedAccount.accountId}, ${selectedAccount.accountType}) with priority ${selectedAccount.priority} for API key ${apiKeyData.name}`
+        `🎯 已选择账户: ${selectedAccount.name} (${selectedAccount.accountId}, ${selectedAccount.accountType}) 优先级 ${selectedAccount.priority} 为 API Key ${apiKeyData.name}`
       )
 
       return {
@@ -820,11 +812,7 @@ class UnifiedClaudeScheduler {
         if (await claudeConsoleAccountService.isAccountOverloaded(accountId)) {
           return false
         }
-        // 🆕 新增：检查是否处于 520 no body 错误状态
-        if (await claudeConsoleAccountService.isAccountNoBodyError(accountId)) {
-          logger.info(`🚫 Claude Console account ${accountId} skipped due to 520 no body error`)
-          return false
-        }
+        // 注意：520 no body 错误不会导致账户不可用，仅触发重试逻辑
         return true
       } else if (accountType === 'bedrock') {
         const accountResult = await bedrockAccountService.getAccount(accountId)
