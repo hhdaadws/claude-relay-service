@@ -1205,14 +1205,8 @@
             <button
               class="group flex items-center rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-500"
               :disabled="!isPlatformFormValid || savingPlatform"
-        <!-- 内容安全部分 -->
-        <div v-show="activeSection === 'content-safety'">
-          <ContentSafetyManager />
-        </div>
-
               @click="savePlatform"
             >
-import ContentSafetyManager from '@/components/settings/ContentSafetyManager.vue'
               <i
                 class="mr-2 transition-transform"
                 :class="
@@ -1222,6 +1216,11 @@ import ContentSafetyManager from '@/components/settings/ContentSafetyManager.vue
               {{ savingPlatform ? '保存中...' : editingPlatform ? '保存修改' : '添加平台' }}
             </button>
           </div>
+        </div>
+
+        <!-- 内容安全部分 -->
+        <div v-show="activeSection === 'content-safety'">
+          <ContentSafetyManager />
         </div>
       </div>
     </div>
@@ -1234,6 +1233,7 @@ import { storeToRefs } from 'pinia'
 import { showToast } from '@/utils/toast'
 import { useSettingsStore } from '@/stores/settings'
 import { apiClient } from '@/config/api'
+import ContentSafetyManager from '@/components/settings/ContentSafetyManager.vue'
 
 // 定义组件名称，用于keep-alive排除
 defineOptions({

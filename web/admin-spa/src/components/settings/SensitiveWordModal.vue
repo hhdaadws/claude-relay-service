@@ -1,11 +1,17 @@
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="$emit('close')">
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    @click.self="$emit('close')"
+  >
     <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800">
       <div class="mb-4 flex items-center justify-between">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
           {{ word ? '编辑敏感词' : '添加敏感词' }}
         </h3>
-        <button @click="$emit('close')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+        <button
+          @click="$emit('close')"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        >
           <i class="fas fa-times text-xl"></i>
         </button>
       </div>
@@ -16,7 +22,14 @@
           <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
             敏感词 <span class="text-red-500">*</span>
           </label>
-          <input v-model="form.word" type="text" required placeholder="输入敏感词" class="form-input w-full" autofocus />
+          <input
+            v-model="form.word"
+            type="text"
+            required
+            placeholder="输入敏感词"
+            class="form-input w-full"
+            autofocus
+          />
         </div>
 
         <!-- 分类选择 -->
@@ -49,7 +62,12 @@
 
         <!-- 启用状态 -->
         <div class="flex items-center">
-          <input v-model="form.enabled" type="checkbox" id="enabled" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+          <input
+            v-model="form.enabled"
+            type="checkbox"
+            id="enabled"
+            class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+          />
           <label for="enabled" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
             启用此敏感词
           </label>
@@ -57,9 +75,7 @@
 
         <!-- 按钮 -->
         <div class="flex justify-end gap-2 pt-4">
-          <button type="button" @click="$emit('close')" class="btn btn-secondary">
-            取消
-          </button>
+          <button type="button" @click="$emit('close')" class="btn btn-secondary">取消</button>
           <button type="submit" class="btn btn-primary">
             {{ word ? '保存修改' : '创建' }}
           </button>
@@ -89,16 +105,20 @@ const form = ref({
 })
 
 // 如果是编辑模式，填充表单数据
-watch(() => props.word, (newWord) => {
-  if (newWord) {
-    form.value = {
-      word: newWord.word || '',
-      category: newWord.category || 'nsfw',
-      matchType: newWord.matchType || 'exact',
-      enabled: newWord.enabled !== false
+watch(
+  () => props.word,
+  (newWord) => {
+    if (newWord) {
+      form.value = {
+        word: newWord.word || '',
+        category: newWord.category || 'nsfw',
+        matchType: newWord.matchType || 'exact',
+        enabled: newWord.enabled !== false
+      }
     }
-  }
-}, { immediate: true })
+  },
+  { immediate: true }
+)
 
 function handleSubmit() {
   if (!form.value.word.trim()) {

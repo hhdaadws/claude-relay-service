@@ -53,22 +53,34 @@
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead class="bg-gray-50 dark:bg-gray-700/50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 敏感词
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 分类
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 匹配方式
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 状态
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 创建时间
               </th>
-              <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 操作
               </th>
             </tr>
@@ -86,12 +98,19 @@
                 <p>暂无敏感词，点击"添加敏感词"开始配置</p>
               </td>
             </tr>
-            <tr v-for="word in sensitiveWords" :key="word.id" class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+            <tr
+              v-for="word in sensitiveWords"
+              :key="word.id"
+              class="hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            >
               <td class="px-4 py-3">
                 <span class="font-medium text-gray-900 dark:text-gray-100">{{ word.word }}</span>
               </td>
               <td class="px-4 py-3">
-                <span :class="getCategoryClass(word.category)" class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium">
+                <span
+                  :class="getCategoryClass(word.category)"
+                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                >
                   {{ getCategoryLabel(word.category) }}
                 </span>
               </td>
@@ -99,7 +118,14 @@
                 {{ getMatchTypeLabel(word.matchType) }}
               </td>
               <td class="px-4 py-3">
-                <span :class="word.enabled ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'" class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium">
+                <span
+                  :class="
+                    word.enabled
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                      : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
+                  "
+                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                >
                   {{ word.enabled ? '启用' : '禁用' }}
                 </span>
               </td>
@@ -107,10 +133,16 @@
                 {{ formatDate(word.createdAt) }}
               </td>
               <td class="px-4 py-3 text-right text-sm font-medium">
-                <button @click="editWord(word)" class="mr-3 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300">
+                <button
+                  @click="editWord(word)"
+                  class="mr-3 text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300"
+                >
                   <i class="fas fa-edit"></i> 编辑
                 </button>
-                <button @click="deleteWord(word)" class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300">
+                <button
+                  @click="deleteWord(word)"
+                  class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                >
                   <i class="fas fa-trash"></i> 删除
                 </button>
               </td>
@@ -133,7 +165,11 @@
           </p>
         </div>
         <div class="flex gap-2">
-          <select v-model="filterApiKeyId" @change="loadViolationLogs" class="form-select rounded-lg border-gray-300 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200">
+          <select
+            v-model="filterApiKeyId"
+            @change="loadViolationLogs"
+            class="form-select rounded-lg border-gray-300 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          >
             <option value="">所有 API Key</option>
             <option v-for="key in apiKeys" :key="key.id" :value="key.id">
               {{ key.name }}
@@ -150,22 +186,34 @@
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead class="bg-gray-50 dark:bg-gray-700/50">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 时间
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 API Key
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 命中敏感词
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 内容片段
               </th>
-              <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 IP地址
               </th>
-              <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              <th
+                class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300"
+              >
                 操作
               </th>
             </tr>
@@ -183,19 +231,32 @@
                 <p>暂无违规记录</p>
               </td>
             </tr>
-            <tr v-for="log in violationLogs" :key="log.id" class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+            <tr
+              v-for="log in violationLogs"
+              :key="log.id"
+              class="hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            >
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {{ formatDateTime(log.timestamp) }}
               </td>
               <td class="px-4 py-3">
-                <span class="font-medium text-gray-900 dark:text-gray-100">{{ log.apiKeyName }}</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{
+                  log.apiKeyName
+                }}</span>
               </td>
               <td class="px-4 py-3">
                 <div class="flex flex-wrap gap-1">
-                  <span v-for="(match, idx) in log.matchedWords.slice(0, 3)" :key="idx" class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                  <span
+                    v-for="(match, idx) in log.matchedWords.slice(0, 3)"
+                    :key="idx"
+                    class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                  >
                     {{ match.word }}
                   </span>
-                  <span v-if="log.matchedWords.length > 3" class="text-xs text-gray-500 dark:text-gray-400">
+                  <span
+                    v-if="log.matchedWords.length > 3"
+                    class="text-xs text-gray-500 dark:text-gray-400"
+                  >
                     +{{ log.matchedWords.length - 3 }}
                   </span>
                 </div>
@@ -207,7 +268,10 @@
                 {{ log.clientIp }}
               </td>
               <td class="px-4 py-3 text-right text-sm font-medium">
-                <button @click="showLogDetail(log)" class="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300">
+                <button
+                  @click="showLogDetail(log)"
+                  class="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300"
+                >
                   <i class="fas fa-info-circle"></i> 详情
                 </button>
               </td>
@@ -219,13 +283,24 @@
       <!-- 分页 -->
       <div v-if="logPagination.total > 0" class="mt-4 flex items-center justify-between">
         <div class="text-sm text-gray-700 dark:text-gray-300">
-          共 {{ logPagination.total }} 条记录，第 {{ logPagination.page }} / {{ logPagination.pages }} 页
+          共 {{ logPagination.total }} 条记录，第 {{ logPagination.page }} /
+          {{ logPagination.pages }} 页
         </div>
         <div class="flex gap-2">
-          <button @click="changePage(logPagination.page - 1)" :disabled="logPagination.page <= 1" class="btn btn-secondary" :class="{ 'opacity-50 cursor-not-allowed': logPagination.page <= 1 }">
+          <button
+            @click="changePage(logPagination.page - 1)"
+            :disabled="logPagination.page <= 1"
+            class="btn btn-secondary"
+            :class="{ 'cursor-not-allowed opacity-50': logPagination.page <= 1 }"
+          >
             <i class="fas fa-chevron-left"></i> 上一页
           </button>
-          <button @click="changePage(logPagination.page + 1)" :disabled="logPagination.page >= logPagination.pages" class="btn btn-secondary" :class="{ 'opacity-50 cursor-not-allowed': logPagination.page >= logPagination.pages }">
+          <button
+            @click="changePage(logPagination.page + 1)"
+            :disabled="logPagination.page >= logPagination.pages"
+            class="btn btn-secondary"
+            :class="{ 'cursor-not-allowed opacity-50': logPagination.page >= logPagination.pages }"
+          >
             下一页 <i class="fas fa-chevron-right"></i>
           </button>
         </div>
@@ -233,16 +308,30 @@
     </section>
 
     <!-- 敏感词编辑弹窗 -->
-    <SensitiveWordModal v-if="showAddModal || editingWord" :word="editingWord" @close="closeWordModal" @submit="handleWordSubmit" />
+    <SensitiveWordModal
+      v-if="showAddModal || editingWord"
+      :word="editingWord"
+      @close="closeWordModal"
+      @submit="handleWordSubmit"
+    />
 
     <!-- 违规日志详情弹窗 -->
     <ViolationDetailModal v-if="selectedLog" :log="selectedLog" @close="selectedLog = null" />
 
     <!-- 批量导入弹窗（简化版） -->
-    <div v-if="showImportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showImportModal = false">
+    <div
+      v-if="showImportModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      @click.self="showImportModal = false"
+    >
       <div class="w-full max-w-md rounded-lg bg-white p-6 dark:bg-gray-800">
         <h3 class="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">批量导入敏感词</h3>
-        <textarea v-model="importText" rows="10" placeholder="每行一个敏感词" class="form-input w-full dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"></textarea>
+        <textarea
+          v-model="importText"
+          rows="10"
+          placeholder="每行一个敏感词"
+          class="form-input w-full dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+        ></textarea>
         <div class="mt-4 flex justify-end gap-2">
           <button @click="showImportModal = false" class="btn btn-secondary">取消</button>
           <button @click="handleBatchImport" class="btn btn-primary">导入</button>
@@ -360,7 +449,10 @@ function closeWordModal() {
 async function handleWordSubmit(wordData) {
   try {
     if (editingWord.value) {
-      await apiClient.put(`/admin/content-security/sensitive-words/${editingWord.value.id}`, wordData)
+      await apiClient.put(
+        `/admin/content-security/sensitive-words/${editingWord.value.id}`,
+        wordData
+      )
       showToast('更新成功', 'success')
     } else {
       await apiClient.post('/admin/content-security/sensitive-words', wordData)
@@ -376,13 +468,13 @@ async function handleWordSubmit(wordData) {
 
 // 批量导入
 async function handleBatchImport() {
-  const lines = importText.value.split('\n').filter(line => line.trim())
+  const lines = importText.value.split('\n').filter((line) => line.trim())
   if (lines.length === 0) {
     showToast('请输入敏感词', 'error')
     return
   }
 
-  const words = lines.map(line => ({
+  const words = lines.map((line) => ({
     word: line.trim(),
     category: 'nsfw',
     matchType: 'exact',
@@ -390,8 +482,13 @@ async function handleBatchImport() {
   }))
 
   try {
-    const response = await apiClient.post('/admin/content-security/sensitive-words/batch-import', { words })
-    showToast(`导入成功 ${response.data.data.success} 个，失败 ${response.data.data.failed} 个`, 'success')
+    const response = await apiClient.post('/admin/content-security/sensitive-words/batch-import', {
+      words
+    })
+    showToast(
+      `导入成功 ${response.data.data.success} 个，失败 ${response.data.data.failed} 个`,
+      'success'
+    )
     showImportModal.value = false
     importText.value = ''
     await loadSensitiveWords()
@@ -462,11 +559,7 @@ function formatDateTime(dateStr) {
 
 // 初始化
 onMounted(async () => {
-  await Promise.all([
-    loadSensitiveWords(),
-    loadViolationLogs(),
-    loadApiKeys()
-  ])
+  await Promise.all([loadSensitiveWords(), loadViolationLogs(), loadApiKeys()])
 })
 </script>
 
