@@ -19,7 +19,7 @@
                 ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
             ]"
-            @click="activeSection = 'branding'"
+            @click="switchSection('branding')"
           >
             <i class="fas fa-palette mr-2"></i>
             品牌设置
@@ -31,22 +31,10 @@
                 ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
             ]"
-            @click="activeSection = 'webhook'"
+            @click="switchSection('webhook')"
           >
             <i class="fas fa-bell mr-2"></i>
             通知设置
-          </button>
-          <button
-            :class="[
-              'border-b-2 pb-2 text-sm font-medium transition-colors',
-              activeSection === 'content-safety'
-                ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            ]"
-            @click="activeSection = 'content-safety'"
-          >
-            <i class="fas fa-shield-alt mr-2"></i>
-            内容安全
           </button>
         </nav>
       </div>
@@ -1217,11 +1205,6 @@
             </button>
           </div>
         </div>
-
-        <!-- 内容安全部分 -->
-        <div v-show="activeSection === 'content-safety'">
-          <ContentSafetyManager />
-        </div>
       </div>
     </div>
   </div>
@@ -1233,7 +1216,7 @@ import { storeToRefs } from 'pinia'
 import { showToast } from '@/utils/toast'
 import { useSettingsStore } from '@/stores/settings'
 import { apiClient } from '@/config/api'
-import ContentSafetyManager from '@/components/settings/ContentSafetyManager.vue'
+// import ContentSafetyManager from '@/components/settings/ContentSafetyManagerSimple.vue'
 
 // 定义组件名称，用于keep-alive排除
 defineOptions({
@@ -1249,6 +1232,13 @@ const iconFileInput = ref()
 
 // 当前激活的设置部分
 const activeSection = ref('branding')
+
+// 切换设置部分的方法
+const switchSection = (section) => {
+  console.log('[SettingsView] 切换标签页:', activeSection.value, '->', section)
+  activeSection.value = section
+  console.log('[SettingsView] 当前激活部分:', activeSection.value)
+}
 
 // 组件挂载状态
 const isMounted = ref(true)
@@ -1451,6 +1441,7 @@ const isPlatformFormValid = computed(() => {
 
 // 页面加载时获取设置
 onMounted(async () => {
+  console.log('[SettingsView] 组件已挂载，当前激活部分:', activeSection.value)
   try {
     await settingsStore.loadOemSettings()
     if (activeSection.value === 'webhook') {

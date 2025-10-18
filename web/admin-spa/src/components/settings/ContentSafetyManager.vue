@@ -308,15 +308,15 @@
     </section>
 
     <!-- 敏感词编辑弹窗 -->
-    <SensitiveWordModal
+    <!-- <SensitiveWordModal
       v-if="showAddModal || editingWord"
       :word="editingWord"
       @close="closeWordModal"
       @submit="handleWordSubmit"
-    />
+    /> -->
 
     <!-- 违规日志详情弹窗 -->
-    <ViolationDetailModal v-if="selectedLog" :log="selectedLog" @close="selectedLog = null" />
+    <!-- <ViolationDetailModal v-if="selectedLog" :log="selectedLog" @close="selectedLog = null" /> -->
 
     <!-- 批量导入弹窗（简化版） -->
     <div
@@ -342,11 +342,13 @@
 </template>
 
 <script setup>
+console.log('[ContentSafety] Component module loaded!')
 import { ref, onMounted } from 'vue'
 import { apiClient } from '@/config/api'
 import { showToast } from '@/utils/toast'
-import SensitiveWordModal from './SensitiveWordModal.vue'
-import ViolationDetailModal from './ViolationDetailModal.vue'
+// 暂时注释掉子组件，先让主组件能加载
+// import SensitiveWordModal from './SensitiveWordModal.vue'
+// import ViolationDetailModal from './ViolationDetailModal.vue'
 
 // 敏感词相关状态
 const sensitiveWords = ref([])
@@ -372,16 +374,21 @@ const logPagination = ref({
 
 // 加载敏感词
 async function loadSensitiveWords() {
+  console.log('[ContentSafety] Loading sensitive words...')
   loadingWords.value = true
   try {
     const response = await apiClient.get('/admin/content-security/sensitive-words')
+    console.log('[ContentSafety] Sensitive words response:', response.data)
     sensitiveWords.value = response.data.data
 
     // 加载统计信息
     const statsResponse = await apiClient.get('/admin/content-security/sensitive-words-stats')
+    console.log('[ContentSafety] Stats response:', statsResponse.data)
     stats.value = statsResponse.data.data
   } catch (error) {
+    console.error('[ContentSafety] Error loading sensitive words:', error)
     showToast('加载敏感词失败：' + (error.response?.data?.message || error.message), 'error')
+    throw error
   } finally {
     loadingWords.value = false
   }
@@ -389,6 +396,7 @@ async function loadSensitiveWords() {
 
 // 加载违规日志
 async function loadViolationLogs(page = 1) {
+  console.log('[ContentSafety] Loading violation logs...')
   loadingLogs.value = true
   try {
     const params = {
@@ -400,10 +408,13 @@ async function loadViolationLogs(page = 1) {
     }
 
     const response = await apiClient.get('/admin/content-security/violation-logs', { params })
+    console.log('[ContentSafety] Violation logs response:', response.data)
     violationLogs.value = response.data.data
     logPagination.value = response.data.pagination
   } catch (error) {
+    console.error('[ContentSafety] Error loading violation logs:', error)
     showToast('加载违规日志失败：' + (error.response?.data?.message || error.message), 'error')
+    throw error
   } finally {
     loadingLogs.value = false
   }
@@ -411,11 +422,14 @@ async function loadViolationLogs(page = 1) {
 
 // 加载API Keys列表
 async function loadApiKeys() {
+  console.log('[ContentSafety] Loading API keys...')
   try {
     const response = await apiClient.get('/admin/api-keys')
+    console.log('[ContentSafety] API keys response:', response.data)
     apiKeys.value = response.data.data || []
   } catch (error) {
-    console.error('Failed to load API keys:', error)
+    console.error('[ContentSafety] Error loading API keys:', error)
+    throw error
   }
 }
 
@@ -559,7 +573,27 @@ function formatDateTime(dateStr) {
 
 // 初始化
 onMounted(async () => {
-  await Promise.all([loadSensitiveWords(), loadViolationLogs(), loadApiKeys()])
+  console.log('[ContentSafety] Component mounted, loading data...')
+  try {
+    await Promise.all([
+      loadSensitiveWords().catch((err) => {
+        console.error('[ContentSafety] Error loading sensitive words:', err)
+        throw err
+      }),
+      loadViolationLogs().catch((err) => {
+        console.error('[ContentSafety] Error loading violation logs:', err)
+        throw err
+      }),
+      loadApiKeys().catch((err) => {
+        console.error('[ContentSafety] Error loading API keys:', err)
+        throw err
+      })
+    ])
+    console.log('[ContentSafety] Data loaded successfully')
+  } catch (error) {
+    console.error('[ContentSafety] Error in onMounted:', error)
+    showToast('加载数据失败: ' + error.message, 'error')
+  }
 })
 </script>
 

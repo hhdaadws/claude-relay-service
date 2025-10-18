@@ -15,6 +15,7 @@ const AccountsView = () => import('@/views/AccountsView.vue')
 const TutorialView = () => import('@/views/TutorialView.vue')
 const SettingsView = () => import('@/views/SettingsView.vue')
 const ApiStatsView = () => import('@/views/ApiStatsView.vue')
+const ContentSafetyView = () => import('@/views/ContentSafetyView.vue')
 
 const routes = [
   {
@@ -130,6 +131,18 @@ const routes = [
         path: '',
         name: 'UserManagement',
         component: UserManagementView
+      }
+    ]
+  },
+  {
+    path: '/content-safety',
+    component: MainLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'ContentSafety',
+        component: ContentSafetyView
       }
     ]
   },

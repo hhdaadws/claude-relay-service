@@ -30,7 +30,7 @@ class ViolationLogService {
       apiKeyId,
       apiKeyName: apiKeyName || 'Unknown',
       matchedWords: JSON.stringify(matchedWords || []),
-      contentSample: this._sanitizeContent(contentSample),
+      contentSample: this._sanitizeContent(contentSample, matchedWords),
       requestPath: requestPath || 'Unknown',
       clientIp: clientIp || 'Unknown',
       userAgent: userAgent || 'Unknown',
@@ -55,9 +55,7 @@ class ViolationLogService {
       // 添加到全局索引
       await client.zadd('violation_logs_global', timestamp, violationId)
 
-      logger.security(
-        `🚫 Violation recorded: ${apiKeyName} matched ${matchedWords.length} word(s)`
-      )
+      logger.security(`🚫 Violation recorded: ${apiKeyName} matched ${matchedWords.length} word(s)`)
 
       return {
         ...logData,
@@ -71,19 +69,44 @@ class ViolationLogService {
   }
 
   /**
-   * 脱敏内容片段（限制长度）
+   * 脱敏内容片段（限制长度，智能截取匹配词附近内容）
    * @private
    * @param {string} content - 原始内容
+   * @param {Array} matchedWords - 匹配的敏感词列表 [{word, category, position}]
    * @returns {string} 脱敏后的内容
    */
-  _sanitizeContent(content) {
+  _sanitizeContent(content, matchedWords = []) {
     if (!content || typeof content !== 'string') {
       return ''
     }
 
-    // 只保留前200个字符
     const maxLength = 200
-    return content.length > maxLength ? content.substring(0, maxLength) + '...' : content
+
+    // 如果内容本身就不超过最大长度，直接返回
+    if (content.length <= maxLength) {
+      return content
+    }
+
+    // 如果有匹配词位置信息，截取第一个匹配词附近的内容
+    if (matchedWords && matchedWords.length > 0 && matchedWords[0].position !== undefined) {
+      const firstMatchPosition = matchedWords[0].position
+
+      // 计算截取起始位置：让匹配词出现在预览的中间位置
+      const halfLength = Math.floor(maxLength / 2)
+      let startPos = Math.max(0, firstMatchPosition - halfLength)
+
+      // 如果截取位置不在开头，添加省略号前缀
+      const prefix = startPos > 0 ? '...' : ''
+      const availableLength = maxLength - prefix.length - 3 // 减去后缀省略号的长度
+
+      // 截取内容
+      const sample = content.substring(startPos, startPos + availableLength)
+
+      return prefix + sample + '...'
+    }
+
+    // 如果没有位置信息，按原来的方式截取前200个字符
+    return content.substring(0, maxLength) + '...'
   }
 
   /**
@@ -105,11 +128,7 @@ class ViolationLogService {
     const maxScore = endDate ? new Date(endDate).getTime() : '+inf'
 
     // 获取总数
-    const total = await client.zcount(
-      `violation_logs_by_key:${apiKeyId}`,
-      minScore,
-      maxScore
-    )
+    const total = await client.zcount(`violation_logs_by_key:${apiKeyId}`, minScore, maxScore)
 
     if (total === 0) {
       return {
