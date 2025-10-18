@@ -318,6 +318,73 @@
             </div>
           </div>
 
+          <!-- 客户端限制 -->
+          <div>
+            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+              客户端限制
+            </label>
+            <div class="flex flex-wrap gap-4">
+              <label class="flex cursor-pointer items-center">
+                <input
+                  v-model="form.clientRestrictionMode"
+                  class="mr-2 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="radio"
+                  value="enable"
+                />
+                <span class="text-sm text-gray-700 dark:text-gray-300">启用客户端限制</span>
+              </label>
+              <label class="flex cursor-pointer items-center">
+                <input
+                  v-model="form.clientRestrictionMode"
+                  class="mr-2 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="radio"
+                  value="disable"
+                />
+                <span class="text-sm text-gray-700 dark:text-gray-300">禁用客户端限制</span>
+              </label>
+              <label class="flex cursor-pointer items-center">
+                <input
+                  v-model="form.clientRestrictionMode"
+                  class="mr-2 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="radio"
+                  value="none"
+                />
+                <span class="text-sm text-gray-700 dark:text-gray-300">不修改</span>
+              </label>
+            </div>
+
+            <!-- 客户端选择（仅在启用时显示） -->
+            <div v-if="form.clientRestrictionMode === 'enable'" class="mt-4 space-y-3">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-600 dark:text-gray-400">
+                  允许的客户端
+                </label>
+                <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                  勾选允许使用此API Key的客户端
+                </p>
+                <div class="space-y-2">
+                  <div v-for="client in supportedClients" :key="client.id" class="flex items-start">
+                    <input
+                      :id="`batch_client_${client.id}`"
+                      v-model="form.allowedClients"
+                      class="mt-0.5 h-4 w-4 rounded border-gray-300 bg-gray-100 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                      :value="client.id"
+                    />
+                    <label class="ml-2 flex-1 cursor-pointer" :for="`batch_client_${client.id}`">
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{
+                        client.name
+                      }}</span>
+                      <span class="block text-xs text-gray-500 dark:text-gray-400">{{
+                        client.description
+                      }}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 专属账号绑定 -->
           <div>
             <div class="mb-3 flex items-center justify-between">
@@ -448,6 +515,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { showToast } from '@/utils/toast'
 import { useApiKeysStore } from '@/stores/apiKeys'
+import { useClientsStore } from '@/stores/clients'
 import { apiClient } from '@/config/api'
 import AccountSelector from '@/components/common/AccountSelector.vue'
 
@@ -476,6 +544,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'success'])
 
 const apiKeysStore = useApiKeysStore()
+const clientsStore = useClientsStore()
 const loading = ref(false)
 const accountsLoading = ref(false)
 const localAccounts = ref({
@@ -494,6 +563,9 @@ const localAccounts = ref({
 const newTag = ref('')
 const availableTags = ref([])
 const tagOperation = ref('none') // 'replace', 'add', 'remove', 'none'
+
+// 客户端相关
+const supportedClients = ref([])
 
 const selectedCount = computed(() => props.selectedKeys.length)
 
@@ -518,7 +590,9 @@ const form = reactive({
   bedrockAccountId: '',
   droidAccountId: '',
   tags: [],
-  isActive: null // null表示不修改
+  isActive: null, // null表示不修改
+  clientRestrictionMode: 'none', // 客户端限制模式: 'enable', 'disable', 'none'
+  allowedClients: [] // 允许的客户端列表
 })
 
 const UNCHANGED_OPTION_VALUE = '__KEEP_ORIGINAL__'
@@ -781,6 +855,17 @@ const batchUpdateApiKeys = async () => {
       updates.tagOperation = tagOperation.value
     }
 
+    // 客户端限制处理
+    if (form.clientRestrictionMode !== 'none') {
+      if (form.clientRestrictionMode === 'enable') {
+        updates.enableClientRestriction = true
+        updates.allowedClients = form.allowedClients
+      } else if (form.clientRestrictionMode === 'disable') {
+        updates.enableClientRestriction = false
+        updates.allowedClients = []
+      }
+    }
+
     const result = await apiClient.put('/admin/api-keys/batch', {
       keyIds: props.selectedKeys,
       updates
@@ -816,6 +901,14 @@ const batchUpdateApiKeys = async () => {
 onMounted(async () => {
   // 加载已存在的标签
   availableTags.value = await apiKeysStore.fetchTags()
+
+  // 加载支持的客户端列表
+  try {
+    supportedClients.value = await clientsStore.loadSupportedClients()
+  } catch (error) {
+    console.error('Failed to load supported clients:', error)
+    supportedClients.value = []
+  }
 
   // 初始化账号数据
   if (props.accounts) {

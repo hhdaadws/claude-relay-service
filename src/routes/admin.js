@@ -1080,6 +1080,14 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
           }
         }
 
+        // 处理客户端限制
+        if (updates.enableClientRestriction !== undefined) {
+          finalUpdates.enableClientRestriction = updates.enableClientRestriction
+        }
+        if (updates.allowedClients !== undefined) {
+          finalUpdates.allowedClients = updates.allowedClients
+        }
+
         // 执行更新
         await apiKeyService.updateApiKey(keyId, finalUpdates)
         results.successCount++
