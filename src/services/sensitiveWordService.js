@@ -1,10 +1,10 @@
 const { v4: uuidv4 } = require('uuid')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
-const LRU = require('lru-cache')
+const { LRUCache } = require('lru-cache')
 
 // LRU缓存配置 - 缓存所有敏感词列表
-const cache = new LRU({
+const cache = new LRUCache({
   max: 1, // 只缓存一个对象（所有敏感词列表）
   ttl: 1000 * 60 * 5, // 5分钟TTL
   updateAgeOnGet: true
@@ -367,9 +367,7 @@ class SensitiveWordService {
       }
     }
 
-    logger.info(
-      `📊 Batch import completed: ${successCount} success, ${failCount} failed`
-    )
+    logger.info(`📊 Batch import completed: ${successCount} success, ${failCount} failed`)
 
     return {
       total: words.length,
