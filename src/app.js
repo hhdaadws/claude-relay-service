@@ -27,6 +27,7 @@ const droidRoutes = require('./routes/droidRoutes')
 const userRoutes = require('./routes/userRoutes')
 const azureOpenaiRoutes = require('./routes/azureOpenaiRoutes')
 const webhookRoutes = require('./routes/webhook')
+const contentSecurityRoutes = require('./routes/contentSecurity')
 
 // Import middleware
 const {
@@ -38,6 +39,7 @@ const {
   requestSizeLimit
 } = require('./middleware/auth')
 const { browserFallbackMiddleware } = require('./middleware/browserFallback')
+const contentFilterMiddleware = require('./middleware/contentFilter')
 
 class Application {
   constructor() {
@@ -275,6 +277,7 @@ class Application {
       this.app.use('/droid', droidRoutes) // Droid (Factory.ai) API 转发
       this.app.use('/azure', azureOpenaiRoutes)
       this.app.use('/admin/webhook', webhookRoutes)
+      this.app.use('/admin/content-security', contentSecurityRoutes)
 
       // 🏠 根路径重定向到新版管理界面
       this.app.get('/', (req, res) => {
