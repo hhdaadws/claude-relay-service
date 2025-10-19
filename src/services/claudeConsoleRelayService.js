@@ -7,10 +7,17 @@ const {
   sanitizeErrorMessage,
   isAccountDisabledError
 } = require('../utils/errorSanitizer')
+const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 
 class ClaudeConsoleRelayService {
   constructor() {
     this.defaultUserAgent = 'claude-cli/1.0.69 (external, cli)'
+    this.claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+  }
+
+  // 🔍 判断是否是真实的 Claude Code 请求
+  isRealClaudeCodeRequest(requestBody) {
+    return ClaudeCodeValidator.includesClaudeCodeSystemPrompt(requestBody, 1)
   }
 
   // 🚀 转发请求到Claude Console API
@@ -58,10 +65,21 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 判断是否是真实的 Claude Code 请求
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(requestBody)
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // 如果不是真实的 Claude Code 请求，需要注入 Claude Code 系统提示词
+      if (!isRealClaudeCode) {
+        modifiedRequestBody = this._injectClaudeCodeSystemPrompt(modifiedRequestBody)
+        logger.debug('📝 Injected Claude Code system prompt for non-Claude-Code request')
+      } else {
+        logger.debug('✅ Real Claude Code request detected, skipping prompt injection')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -341,10 +359,21 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 判断是否是真实的 Claude Code 请求
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(requestBody)
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // 如果不是真实的 Claude Code 请求，需要注入 Claude Code 系统提示词
+      if (!isRealClaudeCode) {
+        modifiedRequestBody = this._injectClaudeCodeSystemPrompt(modifiedRequestBody)
+        logger.debug('[Stream] 📝 Injected Claude Code system prompt for non-Claude-Code request')
+      } else {
+        logger.debug('[Stream] ✅ Real Claude Code request detected, skipping prompt injection')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -878,6 +907,63 @@ class ClaudeConsoleRelayService {
     })
 
     return filteredHeaders
+  }
+
+  // 💉 注入 Claude Code 系统提示词
+  _injectClaudeCodeSystemPrompt(requestBody) {
+    if (!requestBody) {
+      return requestBody
+    }
+
+    // 深拷贝请求体
+    const modifiedBody = JSON.parse(JSON.stringify(requestBody))
+
+    const claudeCodePrompt = {
+      type: 'text',
+      text: this.claudeCodeSystemPrompt,
+      cache_control: {
+        type: 'ephemeral'
+      }
+    }
+
+    if (modifiedBody.system) {
+      if (typeof modifiedBody.system === 'string') {
+        // 字符串格式：转换为数组，Claude Code 提示词在第一位
+        const userSystemPrompt = {
+          type: 'text',
+          text: modifiedBody.system
+        }
+        // 如果用户的提示词与 Claude Code 提示词相同，只保留一个
+        if (modifiedBody.system.trim() === this.claudeCodeSystemPrompt) {
+          modifiedBody.system = [claudeCodePrompt]
+        } else {
+          modifiedBody.system = [claudeCodePrompt, userSystemPrompt]
+        }
+      } else if (Array.isArray(modifiedBody.system)) {
+        // 检查第一个元素是否是 Claude Code 系统提示词
+        const firstItem = modifiedBody.system[0]
+        const isFirstItemClaudeCode =
+          firstItem && firstItem.type === 'text' && firstItem.text === this.claudeCodeSystemPrompt
+
+        if (!isFirstItemClaudeCode) {
+          // 如果第一个不是 Claude Code 提示词，需要在开头插入
+          // 同时检查数组中是否有其他位置包含 Claude Code 提示词，如果有则移除
+          const filteredSystem = modifiedBody.system.filter(
+            (item) => !(item && item.type === 'text' && item.text === this.claudeCodeSystemPrompt)
+          )
+          modifiedBody.system = [claudeCodePrompt, ...filteredSystem]
+        }
+      } else {
+        // 其他格式，记录警告但不抛出错误，尝试处理
+        logger.warn('⚠️ Unexpected system field type:', typeof modifiedBody.system)
+        modifiedBody.system = [claudeCodePrompt]
+      }
+    } else {
+      // 用户没有传递 system，需要添加 Claude Code 提示词
+      modifiedBody.system = [claudeCodePrompt]
+    }
+
+    return modifiedBody
   }
 
   // 🕐 更新最后使用时间
