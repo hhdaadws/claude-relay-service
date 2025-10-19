@@ -98,10 +98,18 @@ router.put('/sensitive-words/:id', authenticateAdmin, async (req, res) => {
     const { word, category, matchType, enabled } = req.body
 
     const updates = {}
-    if (word !== undefined) updates.word = word.trim()
-    if (category !== undefined) updates.category = category
-    if (matchType !== undefined) updates.matchType = matchType
-    if (enabled !== undefined) updates.enabled = enabled
+    if (word !== undefined) {
+      updates.word = word.trim()
+    }
+    if (category !== undefined) {
+      updates.category = category
+    }
+    if (matchType !== undefined) {
+      updates.matchType = matchType
+    }
+    if (enabled !== undefined) {
+      updates.enabled = enabled
+    }
 
     const wordData = await sensitiveWordService.updateSensitiveWord(id, updates)
 
@@ -420,9 +428,7 @@ router.post('/violation-logs/cleanup', authenticateAdmin, async (req, res) => {
       retentionDays !== undefined ? parseInt(retentionDays) : null
     )
 
-    logger.info(
-      `Admin ${req.admin.username} cleaned up ${cleanedCount} expired violation logs`
-    )
+    logger.info(`Admin ${req.admin.username} cleaned up ${cleanedCount} expired violation logs`)
 
     res.json({
       success: true,

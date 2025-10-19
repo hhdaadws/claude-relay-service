@@ -85,7 +85,7 @@ async function importSensitiveWords() {
       disabled: 0
     }
 
-    words.forEach(word => {
+    words.forEach((word) => {
       const category = word.category || 'other'
       const matchType = word.matchType || 'exact'
       const enabled = word.enabled !== false
@@ -130,7 +130,9 @@ async function importSensitiveWords() {
       console.log('')
       console.log('示例敏感词（前5个）:')
       words.slice(0, 5).forEach((word, index) => {
-        console.log(`   ${index + 1}. ${word.word} [${word.category || 'other'}] [${word.matchType || 'exact'}]`)
+        console.log(
+          `   ${index + 1}. ${word.word} [${word.category || 'other'}] [${word.matchType || 'exact'}]`
+        )
       })
       console.log('')
       console.log('✅ 试运行完成！如需实际导入，请移除 --dry-run 参数')

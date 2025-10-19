@@ -418,7 +418,13 @@ class ClaudeConsoleRelayService {
       }
 
       // 判断是否是真实的 Claude Code 请求（完整验证）
-      const isRealClaudeCode = this.isRealClaudeCodeRequest(clientRequest)
+      // 构建 req 对象用于验证
+      const req = {
+        headers: clientHeaders,
+        path: options.path || '/v1/messages',
+        body: requestBody
+      }
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(req)
 
       // 创建修改后的请求体
       let modifiedRequestBody = {

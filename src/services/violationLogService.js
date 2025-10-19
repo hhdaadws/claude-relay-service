@@ -1,7 +1,6 @@
 const { v4: uuidv4 } = require('uuid')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
-const config = require('../../config/config')
 
 class ViolationLogService {
   /**
@@ -93,7 +92,7 @@ class ViolationLogService {
 
       // 计算截取起始位置：让匹配词出现在预览的中间位置
       const halfLength = Math.floor(maxLength / 2)
-      let startPos = Math.max(0, firstMatchPosition - halfLength)
+      const startPos = Math.max(0, firstMatchPosition - halfLength)
 
       // 如果截取位置不在开头，添加省略号前缀
       const prefix = startPos > 0 ? '...' : ''
@@ -102,11 +101,11 @@ class ViolationLogService {
       // 截取内容
       const sample = content.substring(startPos, startPos + availableLength)
 
-      return prefix + sample + '...'
+      return `${prefix + sample}...`
     }
 
     // 如果没有位置信息，按原来的方式截取前200个字符
-    return content.substring(0, maxLength) + '...'
+    return `${content.substring(0, maxLength)}...`
   }
 
   /**
@@ -141,7 +140,6 @@ class ViolationLogService {
 
     // 计算分页
     const offset = (page - 1) * limit
-    const end = offset + limit - 1
 
     // 获取违规日志ID（倒序：最新的在前）
     const violationIds = await client.zrevrangebyscore(

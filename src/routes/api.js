@@ -721,7 +721,12 @@ async function handleMessagesRequest(req, res) {
 router.post('/v1/messages', authenticateApiKey, contentFilterMiddleware, handleMessagesRequest)
 
 // 🚀 Claude API messages 端点 - /claude/v1/messages (别名)
-router.post('/claude/v1/messages', authenticateApiKey, contentFilterMiddleware, handleMessagesRequest)
+router.post(
+  '/claude/v1/messages',
+  authenticateApiKey,
+  contentFilterMiddleware,
+  handleMessagesRequest
+)
 
 // 📋 模型列表端点 - 支持 Claude, OpenAI, Gemini
 router.get('/v1/models', authenticateApiKey, async (req, res) => {
