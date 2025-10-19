@@ -45,10 +45,7 @@ class SensitiveWordService {
       updatedAt: now
     }
 
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     // 存储敏感词
     await client.hset(`sensitive_word:${wordId}`, wordData)
@@ -57,7 +54,7 @@ class SensitiveWordService {
     await client.sadd('sensitive_words_index', wordId)
 
     // 清除缓存
-    cache.del(CACHE_KEY)
+    cache.delete(CACHE_KEY)
 
     logger.info(`✅ Created sensitive word: ${word} (${category})`)
 
@@ -74,10 +71,7 @@ class SensitiveWordService {
    * @returns {Object} 更新后的敏感词数据
    */
   async updateSensitiveWord(wordId, updates) {
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     const existing = await client.hgetall(`sensitive_word:${wordId}`)
     if (!existing || Object.keys(existing).length === 0) {
@@ -98,7 +92,7 @@ class SensitiveWordService {
     await client.hset(`sensitive_word:${wordId}`, updatedData)
 
     // 清除缓存
-    cache.del(CACHE_KEY)
+    cache.delete(CACHE_KEY)
 
     logger.info(`✅ Updated sensitive word: ${wordId}`)
 
@@ -113,16 +107,13 @@ class SensitiveWordService {
    * @param {string} wordId - 敏感词ID
    */
   async deleteSensitiveWord(wordId) {
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     await client.del(`sensitive_word:${wordId}`)
     await client.srem('sensitive_words_index', wordId)
 
     // 清除缓存
-    cache.del(CACHE_KEY)
+    cache.delete(CACHE_KEY)
 
     logger.info(`✅ Deleted sensitive word: ${wordId}`)
   }
@@ -136,10 +127,7 @@ class SensitiveWordService {
       throw new Error('敏感词ID数组不能为空')
     }
 
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     for (const wordId of wordIds) {
       await client.del(`sensitive_word:${wordId}`)
@@ -147,7 +135,7 @@ class SensitiveWordService {
     }
 
     // 清除缓存
-    cache.del(CACHE_KEY)
+    cache.delete(CACHE_KEY)
 
     logger.info(`✅ Batch deleted ${wordIds.length} sensitive words`)
   }
@@ -158,10 +146,7 @@ class SensitiveWordService {
    * @returns {Object} 敏感词数据
    */
   async getSensitiveWord(wordId) {
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     const wordData = await client.hgetall(`sensitive_word:${wordId}`)
     if (!wordData || Object.keys(wordData).length === 0) {
@@ -187,10 +172,7 @@ class SensitiveWordService {
       return onlyEnabled ? cached.filter((w) => w.enabled) : cached
     }
 
-    const client = redis.getClient()
-    if (!client) {
-      throw new Error('Redis client is not available')
-    }
+    const client = redis.getClientSafe()
 
     // 获取所有敏感词ID
     const wordIds = await client.smembers('sensitive_words_index')
@@ -331,7 +313,7 @@ class SensitiveWordService {
    * 刷新缓存
    */
   refreshCache() {
-    cache.del(CACHE_KEY)
+    cache.delete(CACHE_KEY)
     logger.info('🔄 Sensitive words cache cleared')
   }
 
