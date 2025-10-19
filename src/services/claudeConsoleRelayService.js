@@ -7,7 +7,6 @@ const {
   sanitizeErrorMessage,
   isAccountDisabledError
 } = require('../utils/errorSanitizer')
-const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 
 class ClaudeConsoleRelayService {
   constructor() {
@@ -16,8 +15,67 @@ class ClaudeConsoleRelayService {
   }
 
   // 🔍 判断是否是真实的 Claude Code 请求
-  isRealClaudeCodeRequest(requestBody) {
-    return ClaudeCodeValidator.includesClaudeCodeSystemPrompt(requestBody, 1)
+  // 严格验证：User-Agent + Headers + 主要 Claude Code 系统提示词 + metadata.user_id
+  isRealClaudeCodeRequest(req) {
+    // 1. 检查 User-Agent 是否匹配 claude-cli
+    const userAgent = req.headers['user-agent'] || ''
+    const claudeCodePattern = /^claude-cli\/\d+\.\d+\.\d+/i
+    if (!claudeCodePattern.test(userAgent)) {
+      return false
+    }
+
+    // 2. 对于 messages 路径，检查必需的 headers
+    const path = req.path || ''
+    if (path.includes('messages')) {
+      const xApp = req.headers['x-app']
+      const anthropicBeta = req.headers['anthropic-beta']
+      const anthropicVersion = req.headers['anthropic-version']
+
+      if (!xApp || !anthropicBeta || !anthropicVersion) {
+        return false
+      }
+
+      // 3. 检查 metadata.user_id
+      if (!req.body?.metadata?.user_id) {
+        return false
+      }
+
+      const userId = req.body.metadata.user_id
+      const userIdPattern = /^user_[a-fA-F0-9]{64}_account__session_[\w-]+$/
+      if (!userIdPattern.test(userId)) {
+        return false
+      }
+
+      // 4. 严格检查系统提示词：必须包含主要的 Claude Code 系统提示词
+      // 只匹配 "You are Claude Code, Anthropic's official CLI for Claude."
+      if (!this._hasExactClaudeCodeSystemPrompt(req.body)) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  // 🔍 检查是否包含精确的 Claude Code 主要系统提示词
+  _hasExactClaudeCodeSystemPrompt(body) {
+    const mainClaudeCodePrompt = this.claudeCodeSystemPrompt // "You are Claude Code, Anthropic's official CLI for Claude."
+
+    if (!body || !body.system) {
+      return false
+    }
+
+    if (!Array.isArray(body.system)) {
+      return false
+    }
+
+    // 检查 system 数组中是否有任何一个 entry 完全匹配主要提示词
+    for (const entry of body.system) {
+      if (entry?.type === 'text' && entry?.text === mainClaudeCodePrompt) {
+        return true
+      }
+    }
+
+    return false
   }
 
   // 🚀 转发请求到Claude Console API
@@ -65,8 +123,8 @@ class ClaudeConsoleRelayService {
         }
       }
 
-      // 判断是否是真实的 Claude Code 请求
-      const isRealClaudeCode = this.isRealClaudeCodeRequest(requestBody)
+      // 判断是否是真实的 Claude Code 请求（完整验证）
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(clientRequest)
 
       // 创建修改后的请求体
       let modifiedRequestBody = {
@@ -359,8 +417,8 @@ class ClaudeConsoleRelayService {
         }
       }
 
-      // 判断是否是真实的 Claude Code 请求
-      const isRealClaudeCode = this.isRealClaudeCodeRequest(requestBody)
+      // 判断是否是真实的 Claude Code 请求（完整验证）
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(clientRequest)
 
       // 创建修改后的请求体
       let modifiedRequestBody = {

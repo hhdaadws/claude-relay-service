@@ -1,19 +1,20 @@
 /**
  * Test script for Console channel Claude Code validation
  *
- * This script tests the claudeConsoleRelayService implementation with various scenarios:
- * 1. Compliant Claude Code request (full headers + UA + system prompt)
+ * This script tests the claudeConsoleRelayService strict validation with various scenarios:
+ * 1. Compliant Claude Code request (full headers + UA + exact system prompt + user_id)
  * 2. Missing specific headers
  * 3. Incorrect User-Agent
  * 4. Missing Claude Code system prompt
+ * 5. Missing user_id or invalid format
  */
 
-const ClaudeCodeValidator = require('./src/validators/clients/claudeCodeValidator')
+const relayService = require('./src/services/claudeConsoleRelayService')
 
 // Test data
 const CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 
-// Test Case 1: Compliant Claude Code request
+// Test Case 1: Compliant Claude Code request (完整的真实请求)
 const compliantRequest = {
   headers: {
     'user-agent': 'claude-cli/1.0.69 (darwin, arm64)',
@@ -22,6 +23,7 @@ const compliantRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -37,7 +39,10 @@ const compliantRequest = {
         role: 'user',
         content: 'Hello, Claude Code!'
       }
-    ]
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
   }
 }
 
@@ -50,6 +55,7 @@ const missingHeaderRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -65,7 +71,10 @@ const missingHeaderRequest = {
         role: 'user',
         content: 'Hello, Claude Code!'
       }
-    ]
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
   }
 }
 
@@ -78,6 +87,7 @@ const incorrectUserAgentRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -93,7 +103,10 @@ const incorrectUserAgentRequest = {
         role: 'user',
         content: 'Hello, Claude Code!'
       }
-    ]
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
   }
 }
 
@@ -106,6 +119,7 @@ const missingSystemPromptRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -120,7 +134,10 @@ const missingSystemPromptRequest = {
         role: 'user',
         content: 'Hello!'
       }
-    ]
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
   }
 }
 
@@ -133,6 +150,7 @@ const noSystemFieldRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -141,7 +159,10 @@ const noSystemFieldRequest = {
         role: 'user',
         content: 'Hello!'
       }
-    ]
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
   }
 }
 
@@ -154,6 +175,7 @@ const systemPromptAsStringRequest = {
     'anthropic-version': '2023-06-01',
     'content-type': 'application/json'
   },
+  path: '/v1/messages',
   body: {
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
@@ -163,7 +185,72 @@ const systemPromptAsStringRequest = {
         role: 'user',
         content: 'Hello!'
       }
+    ],
+    metadata: {
+      user_id: 'user_d98385411c93cd074b2cefd5c9831fe77f24a53e4ecdcd1f830bba586fe62cb9_account__session_17cf0fd3-d51b-4b59-977d-b899dafb3022'
+    }
+  }
+}
+
+// Test Case 7: Missing metadata.user_id
+const missingUserIdRequest = {
+  headers: {
+    'user-agent': 'claude-cli/1.0.69 (darwin, arm64)',
+    'x-app': 'claude-code',
+    'anthropic-beta': 'prompt-caching-2024-07-31',
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json'
+  },
+  path: '/v1/messages',
+  body: {
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 8192,
+    system: [
+      {
+        type: 'text',
+        text: CLAUDE_CODE_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' }
+      }
+    ],
+    messages: [
+      {
+        role: 'user',
+        content: 'Hello!'
+      }
     ]
+    // metadata: { user_id: ... } // Missing
+  }
+}
+
+// Test Case 8: Invalid user_id format
+const invalidUserIdRequest = {
+  headers: {
+    'user-agent': 'claude-cli/1.0.69 (darwin, arm64)',
+    'x-app': 'claude-code',
+    'anthropic-beta': 'prompt-caching-2024-07-31',
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json'
+  },
+  path: '/v1/messages',
+  body: {
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 8192,
+    system: [
+      {
+        type: 'text',
+        text: CLAUDE_CODE_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' }
+      }
+    ],
+    messages: [
+      {
+        role: 'user',
+        content: 'Hello!'
+      }
+    ],
+    metadata: {
+      user_id: 'invalid_user_id_format' // Invalid format
+    }
   }
 }
 
@@ -173,15 +260,17 @@ function runTest(testName, request) {
   console.log(`TEST: ${testName}`)
   console.log('='.repeat(80))
 
-  // Test the validator
-  const isRealClaudeCode = ClaudeCodeValidator.includesClaudeCodeSystemPrompt(request.body, 1)
+  // Test the validator (使用 relayService 的严格验证方法)
+  const isRealClaudeCode = relayService.isRealClaudeCodeRequest(request)
 
   console.log('\nRequest Details:')
   console.log('  User-Agent:', request.headers['user-agent'])
+  console.log('  Path:', request.path || '(missing)')
   console.log('  x-app header:', request.headers['x-app'] || '(missing)')
   console.log('  anthropic-beta:', request.headers['anthropic-beta'] || '(missing)')
   console.log('  anthropic-version:', request.headers['anthropic-version'] || '(missing)')
   console.log('  System field type:', request.body.system ? (Array.isArray(request.body.system) ? 'array' : typeof request.body.system) : '(missing)')
+  console.log('  metadata.user_id:', request.body.metadata?.user_id ? request.body.metadata.user_id.substring(0, 40) + '...' : '(missing)')
 
   if (request.body.system) {
     if (Array.isArray(request.body.system)) {
@@ -216,18 +305,18 @@ const results = []
 results.push({
   name: 'Compliant Claude Code Request',
   expected: true,
-  actual: runTest('Compliant Claude Code Request (Full Headers + UA + Prompt)', compliantRequest)
+  actual: runTest('Compliant Claude Code Request (Full Headers + UA + Prompt + user_id)', compliantRequest)
 })
 
 results.push({
   name: 'Missing x-app Header',
-  expected: true, // System prompt is present, so it's still recognized as Claude Code
+  expected: false, // 缺少必需 header，应该失败
   actual: runTest('Missing x-app Header', missingHeaderRequest)
 })
 
 results.push({
   name: 'Incorrect User-Agent',
-  expected: true, // System prompt is present, so it's still recognized as Claude Code
+  expected: false, // User-Agent 不匹配，应该失败
   actual: runTest('Incorrect User-Agent', incorrectUserAgentRequest)
 })
 
@@ -247,6 +336,18 @@ results.push({
   name: 'System Prompt as String',
   expected: false, // Validator only accepts array format, not string
   actual: runTest('System Prompt as String (Legacy Format)', systemPromptAsStringRequest)
+})
+
+results.push({
+  name: 'Missing metadata.user_id',
+  expected: false, // 缺少 user_id，应该失败
+  actual: runTest('Missing metadata.user_id', missingUserIdRequest)
+})
+
+results.push({
+  name: 'Invalid user_id Format',
+  expected: false, // user_id 格式错误，应该失败
+  actual: runTest('Invalid user_id Format', invalidUserIdRequest)
 })
 
 // Summary
