@@ -1027,7 +1027,117 @@ class ClaudeConsoleRelayService {
       modifiedBody.system = [claudeCodePrompt]
     }
 
+    // 🔥 注入后立即限制缓存控制块数量，确保不超过4个
+    this._enforceCacheControlLimit(modifiedBody)
+
     return modifiedBody
+  }
+
+  // ⚖️ 限制带缓存控制的内容数量
+  _enforceCacheControlLimit(body) {
+    const MAX_CACHE_CONTROL_BLOCKS = 4
+
+    if (!body || typeof body !== 'object') {
+      return
+    }
+
+    const countCacheControlBlocks = () => {
+      let total = 0
+
+      if (Array.isArray(body.messages)) {
+        body.messages.forEach((message) => {
+          if (!message || !Array.isArray(message.content)) {
+            return
+          }
+          message.content.forEach((item) => {
+            if (item && item.cache_control) {
+              total += 1
+            }
+          })
+        })
+      }
+
+      if (Array.isArray(body.system)) {
+        body.system.forEach((item) => {
+          if (item && item.cache_control) {
+            total += 1
+          }
+        })
+      }
+
+      return total
+    }
+
+    const removeFromMessages = () => {
+      if (!Array.isArray(body.messages)) {
+        return false
+      }
+
+      for (let messageIndex = 0; messageIndex < body.messages.length; messageIndex += 1) {
+        const message = body.messages[messageIndex]
+        if (!message || !Array.isArray(message.content)) {
+          continue
+        }
+
+        for (let contentIndex = 0; contentIndex < message.content.length; contentIndex += 1) {
+          const contentItem = message.content[contentIndex]
+          if (contentItem && contentItem.cache_control) {
+            delete contentItem.cache_control
+            logger.debug(
+              `🧹 Removed cache_control from messages[${messageIndex}].content[${contentIndex}] to enforce limit`
+            )
+            return true
+          }
+        }
+      }
+
+      return false
+    }
+
+    const removeFromSystem = () => {
+      if (!Array.isArray(body.system)) {
+        return false
+      }
+
+      for (let index = 0; index < body.system.length; index += 1) {
+        const systemItem = body.system[index]
+        if (systemItem && systemItem.cache_control) {
+          delete systemItem.cache_control
+          logger.debug(`🧹 Removed cache_control from system[${index}] to enforce limit`)
+          return true
+        }
+      }
+
+      return false
+    }
+
+    let total = countCacheControlBlocks()
+
+    if (total > MAX_CACHE_CONTROL_BLOCKS) {
+      logger.warn(
+        `⚠️ Request has ${total} cache_control blocks, exceeding limit of ${MAX_CACHE_CONTROL_BLOCKS}. Removing excess blocks...`
+      )
+    }
+
+    while (total > MAX_CACHE_CONTROL_BLOCKS) {
+      if (removeFromMessages()) {
+        total -= 1
+        continue
+      }
+
+      if (removeFromSystem()) {
+        total -= 1
+        continue
+      }
+
+      break
+    }
+
+    if (total > MAX_CACHE_CONTROL_BLOCKS) {
+      logger.error(
+        `❌ Failed to enforce cache_control limit: still have ${total} blocks after cleanup`
+      )
+    }
   }
 
   // 🕐 更新最后使用时间
