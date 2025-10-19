@@ -11,6 +11,71 @@ const {
 class ClaudeConsoleRelayService {
   constructor() {
     this.defaultUserAgent = 'claude-cli/1.0.69 (external, cli)'
+    this.claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+  }
+
+  // 🔍 判断是否是真实的 Claude Code 请求
+  // 严格验证：User-Agent + Headers + 主要 Claude Code 系统提示词 + metadata.user_id
+  isRealClaudeCodeRequest(req) {
+    // 1. 检查 User-Agent 是否匹配 claude-cli
+    const userAgent = req.headers['user-agent'] || ''
+    const claudeCodePattern = /^claude-cli\/\d+\.\d+\.\d+/i
+    if (!claudeCodePattern.test(userAgent)) {
+      return false
+    }
+
+    // 2. 对于 messages 路径，检查必需的 headers
+    const path = req.path || ''
+    if (path.includes('messages')) {
+      const xApp = req.headers['x-app']
+      const anthropicBeta = req.headers['anthropic-beta']
+      const anthropicVersion = req.headers['anthropic-version']
+
+      if (!xApp || !anthropicBeta || !anthropicVersion) {
+        return false
+      }
+
+      // 3. 检查 metadata.user_id
+      if (!req.body?.metadata?.user_id) {
+        return false
+      }
+
+      const userId = req.body.metadata.user_id
+      const userIdPattern = /^user_[a-fA-F0-9]{64}_account__session_[\w-]+$/
+      if (!userIdPattern.test(userId)) {
+        return false
+      }
+
+      // 4. 严格检查系统提示词：必须包含主要的 Claude Code 系统提示词
+      // 只匹配 "You are Claude Code, Anthropic's official CLI for Claude."
+      if (!this._hasExactClaudeCodeSystemPrompt(req.body)) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  // 🔍 检查是否包含精确的 Claude Code 主要系统提示词
+  _hasExactClaudeCodeSystemPrompt(body) {
+    const mainClaudeCodePrompt = this.claudeCodeSystemPrompt // "You are Claude Code, Anthropic's official CLI for Claude."
+
+    if (!body || !body.system) {
+      return false
+    }
+
+    if (!Array.isArray(body.system)) {
+      return false
+    }
+
+    // 检查 system 数组中是否有任何一个 entry 完全匹配主要提示词
+    for (const entry of body.system) {
+      if (entry?.type === 'text' && entry?.text === mainClaudeCodePrompt) {
+        return true
+      }
+    }
+
+    return false
   }
 
   // 🚀 转发请求到Claude Console API
@@ -58,10 +123,21 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 判断是否是真实的 Claude Code 请求（完整验证）
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(clientRequest)
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // 如果不是真实的 Claude Code 请求，需要注入 Claude Code 系统提示词
+      if (!isRealClaudeCode) {
+        modifiedRequestBody = this._injectClaudeCodeSystemPrompt(modifiedRequestBody)
+        logger.debug('📝 Injected Claude Code system prompt for non-Claude-Code request')
+      } else {
+        logger.debug('✅ Real Claude Code request detected, skipping prompt injection')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -341,10 +417,21 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 判断是否是真实的 Claude Code 请求（完整验证）
+      const isRealClaudeCode = this.isRealClaudeCodeRequest(clientRequest)
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // 如果不是真实的 Claude Code 请求，需要注入 Claude Code 系统提示词
+      if (!isRealClaudeCode) {
+        modifiedRequestBody = this._injectClaudeCodeSystemPrompt(modifiedRequestBody)
+        logger.debug('[Stream] 📝 Injected Claude Code system prompt for non-Claude-Code request')
+      } else {
+        logger.debug('[Stream] ✅ Real Claude Code request detected, skipping prompt injection')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -878,6 +965,63 @@ class ClaudeConsoleRelayService {
     })
 
     return filteredHeaders
+  }
+
+  // 💉 注入 Claude Code 系统提示词
+  _injectClaudeCodeSystemPrompt(requestBody) {
+    if (!requestBody) {
+      return requestBody
+    }
+
+    // 深拷贝请求体
+    const modifiedBody = JSON.parse(JSON.stringify(requestBody))
+
+    const claudeCodePrompt = {
+      type: 'text',
+      text: this.claudeCodeSystemPrompt,
+      cache_control: {
+        type: 'ephemeral'
+      }
+    }
+
+    if (modifiedBody.system) {
+      if (typeof modifiedBody.system === 'string') {
+        // 字符串格式：转换为数组，Claude Code 提示词在第一位
+        const userSystemPrompt = {
+          type: 'text',
+          text: modifiedBody.system
+        }
+        // 如果用户的提示词与 Claude Code 提示词相同，只保留一个
+        if (modifiedBody.system.trim() === this.claudeCodeSystemPrompt) {
+          modifiedBody.system = [claudeCodePrompt]
+        } else {
+          modifiedBody.system = [claudeCodePrompt, userSystemPrompt]
+        }
+      } else if (Array.isArray(modifiedBody.system)) {
+        // 检查第一个元素是否是 Claude Code 系统提示词
+        const firstItem = modifiedBody.system[0]
+        const isFirstItemClaudeCode =
+          firstItem && firstItem.type === 'text' && firstItem.text === this.claudeCodeSystemPrompt
+
+        if (!isFirstItemClaudeCode) {
+          // 如果第一个不是 Claude Code 提示词，需要在开头插入
+          // 同时检查数组中是否有其他位置包含 Claude Code 提示词，如果有则移除
+          const filteredSystem = modifiedBody.system.filter(
+            (item) => !(item && item.type === 'text' && item.text === this.claudeCodeSystemPrompt)
+          )
+          modifiedBody.system = [claudeCodePrompt, ...filteredSystem]
+        }
+      } else {
+        // 其他格式，记录警告但不抛出错误，尝试处理
+        logger.warn('⚠️ Unexpected system field type:', typeof modifiedBody.system)
+        modifiedBody.system = [claudeCodePrompt]
+      }
+    } else {
+      // 用户没有传递 system，需要添加 Claude Code 提示词
+      modifiedBody.system = [claudeCodePrompt]
+    }
+
+    return modifiedBody
   }
 
   // 🕐 更新最后使用时间
