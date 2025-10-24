@@ -537,6 +537,59 @@ async function handleMessagesRequest(req, res) {
           req.headers,
           accountId
         )
+
+        // 检查5xx错误并尝试切换到备用账户
+        if (response.statusCode >= 500 && response.statusCode < 600) {
+          logger.warn(
+            `🔥 Server error (${response.statusCode}) from Console account ${accountId}, attempting backup switch`
+          )
+
+          try {
+            const sessionHash = sessionHelper.generateSessionHash(req.body)
+            const backupSelection = await unifiedClaudeScheduler.switchToBackupAccount(
+              req.apiKey,
+              sessionHash,
+              req.body.model,
+              accountId
+            )
+
+            if (backupSelection && backupSelection.isBackupAccount) {
+              logger.success(
+                `✅ Switched to backup account ${backupSelection.accountId} (${backupSelection.accountType}), retrying request`
+              )
+
+              // 使用备用账户重试
+              if (backupSelection.accountType === 'claude-official') {
+                response = await claudeRelayService.relayRequest(
+                  req.body,
+                  req.apiKey,
+                  req,
+                  res,
+                  req.headers
+                )
+              } else if (backupSelection.accountType === 'claude-console') {
+                response = await claudeConsoleRelayService.relayRequest(
+                  req.body,
+                  req.apiKey,
+                  req,
+                  res,
+                  req.headers,
+                  backupSelection.accountId
+                )
+              }
+
+              response.isBackupAccount = true
+              logger.success(
+                `✅ Backup account request succeeded with status ${response.statusCode}`
+              )
+            }
+          } catch (backupError) {
+            logger.warn(
+              `⚠️ Failed to switch to backup account or backup request failed: ${backupError.message}`
+            )
+            // 继续使用原始错误响应
+          }
+        }
       } else if (accountType === 'bedrock') {
         // Bedrock账号使用Bedrock转发服务
         try {

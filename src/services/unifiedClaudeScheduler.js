@@ -299,7 +299,8 @@ class UnifiedClaudeScheduler {
       const availableAccounts = await this._getAllAvailableAccounts(
         apiKeyData,
         effectiveModel,
-        false // 仅前缀才走 CCR：默认池不包含 CCR 账户
+        false, // 仅前缀才走 CCR：默认池不包含 CCR 账户
+        false // excludeBackup: 优先使用非备用账户
       )
 
       if (availableAccounts.length === 0) {
@@ -346,7 +347,12 @@ class UnifiedClaudeScheduler {
   }
 
   // 📋 获取所有可用账户（合并官方和Console）
-  async _getAllAvailableAccounts(apiKeyData, requestedModel = null, includeCcr = false) {
+  async _getAllAvailableAccounts(
+    apiKeyData,
+    requestedModel = null,
+    includeCcr = false,
+    excludeBackup = true
+  ) {
     const availableAccounts = []
     const isOpusRequest =
       requestedModel && typeof requestedModel === 'string'
@@ -489,7 +495,10 @@ class UnifiedClaudeScheduler {
         (account.accountType === 'shared' || !account.accountType) && // 兼容旧数据
         this._isSchedulable(account.schedulable)
       ) {
-        // 检查是否可调度
+        // 如果需要排除备用账户，跳过标记为备用的账户
+        if (excludeBackup && account.isBackup === 'true') {
+          continue
+        }
 
         // 检查模型支持
         if (!this._isModelSupportedByAccount(account, 'claude-official', requestedModel)) {
@@ -552,7 +561,10 @@ class UnifiedClaudeScheduler {
         currentAccount.accountType === 'shared' &&
         this._isSchedulable(currentAccount.schedulable)
       ) {
-        // 检查是否可调度
+        // 如果需要排除备用账户，跳过标记为备用的账户
+        if (excludeBackup && currentAccount.isBackup === true) {
+          continue
+        }
 
         // 检查模型支持
         if (!this._isModelSupportedByAccount(currentAccount, 'claude-console', requestedModel)) {
@@ -1440,6 +1452,69 @@ class UnifiedClaudeScheduler {
     } catch (error) {
       logger.error('❌ Failed to get available CCR accounts:', error)
       return []
+    }
+  }
+
+  // 🔄 切换到备用账户 (当正常账户出错时调用)
+  async switchToBackupAccount(apiKeyData, sessionHash, requestedModel = null, failedAccountId) {
+    try {
+      logger.info(
+        `🔄 Switching to backup account due to error from account ${failedAccountId} for session ${sessionHash}`
+      )
+
+      // 解析供应商前缀
+      const { vendor, baseModel } = parseVendorPrefixedModel(requestedModel)
+      const effectiveModel = vendor === 'ccr' ? baseModel : requestedModel
+
+      // 获取所有备用账户（不排除备用账户）
+      const backupAccounts = await this._getAllAvailableAccounts(
+        apiKeyData,
+        effectiveModel,
+        vendor === 'ccr', // CCR请求时包含CCR账户
+        false // excludeBackup: 获取所有账户
+      )
+
+      // 过滤出标记为备用的账户
+      const availableBackupAccounts = backupAccounts.filter((account) => {
+        const isBackup = account.isBackup === 'true' || account.isBackup === true
+        return isBackup
+      })
+
+      if (availableBackupAccounts.length === 0) {
+        logger.warn('⚠️ No backup accounts available, cannot switch')
+        throw new Error('No backup accounts available')
+      }
+
+      // 按优先级排序备用账户
+      const sortedBackupAccounts = this._sortAccountsByPriority(availableBackupAccounts)
+
+      // 选择第一个备用账户
+      const backupAccount = sortedBackupAccounts[0]
+
+      // 如果有会话哈希，更新会话映射到备用账户
+      if (sessionHash) {
+        await this._setSessionMapping(
+          sessionHash,
+          backupAccount.accountId,
+          backupAccount.accountType
+        )
+        logger.info(
+          `🔄 Updated sticky session to backup account: ${backupAccount.name} (${backupAccount.accountId}, ${backupAccount.accountType}) for session ${sessionHash}`
+        )
+      }
+
+      logger.success(
+        `✅ Successfully switched to backup account: ${backupAccount.name} (${backupAccount.accountId}, ${backupAccount.accountType})`
+      )
+
+      return {
+        accountId: backupAccount.accountId,
+        accountType: backupAccount.accountType,
+        isBackupAccount: true
+      }
+    } catch (error) {
+      logger.error('❌ Failed to switch to backup account:', error)
+      throw error
     }
   }
 }

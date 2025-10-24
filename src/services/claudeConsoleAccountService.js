@@ -65,6 +65,7 @@ class ClaudeConsoleAccountService {
       isActive = true,
       accountType = 'shared', // 'dedicated' or 'shared'
       schedulable = true, // 是否可被调度
+      isBackup = false, // 是否为备用账户
       dailyQuota = 0, // 每日额度限制（美元），0表示不限制
       quotaResetTime = '00:00' // 额度重置时间（HH:mm格式）
     } = options
@@ -107,6 +108,7 @@ class ClaudeConsoleAccountService {
       rateLimitStatus: '',
       // 调度控制
       schedulable: schedulable.toString(),
+      isBackup: isBackup.toString(), // 是否为备用账户
       // 额度管理相关
       dailyQuota: dailyQuota.toString(), // 每日额度限制（美元）
       dailyUsage: '0', // 当日使用金额（美元）
@@ -193,6 +195,7 @@ class ClaudeConsoleAccountService {
             errorMessage: accountData.errorMessage,
             rateLimitInfo,
             schedulable: accountData.schedulable !== 'false', // 默认为true，只有明确设置为false才不可调度
+            isBackup: accountData.isBackup === 'true', // 是否为备用账户
 
             // ✅ 前端显示订阅过期时间（业务字段）
             expiresAt: accountData.subscriptionExpiresAt || null,
@@ -328,6 +331,12 @@ class ClaudeConsoleAccountService {
         } else {
           logger.info(`⛔ Manually disabled scheduling for Claude Console account ${accountId}`)
         }
+      }
+      if (updates.isBackup !== undefined) {
+        updatedData.isBackup = updates.isBackup.toString()
+        logger.info(
+          `🔄 Updated backup status for Claude Console account ${accountId}: ${updates.isBackup}`
+        )
       }
 
       // 额度管理相关字段

@@ -69,6 +69,7 @@ class ClaudeAccountService {
       platform = 'claude',
       priority = 50, // 调度优先级 (1-100，数字越小优先级越高)
       schedulable = true, // 是否可被调度
+      isBackup = false, // 是否为备用账户
       subscriptionInfo = null, // 手动设置的订阅信息
       autoStopOnWarning = false, // 5小时使用量接近限制时自动停止调度
       useUnifiedUserAgent = false, // 是否使用统一Claude Code版本的User-Agent
@@ -107,6 +108,7 @@ class ClaudeAccountService {
         status: 'active', // 有OAuth数据的账户直接设为active
         errorMessage: '',
         schedulable: schedulable.toString(), // 是否可被调度
+        isBackup: isBackup.toString(), // 是否为备用账户
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
         useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
@@ -145,6 +147,7 @@ class ClaudeAccountService {
         status: 'created', // created, active, expired, error
         errorMessage: '',
         schedulable: schedulable.toString(), // 是否可被调度
+        isBackup: isBackup.toString(), // 是否为备用账户
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
         // 手动设置的订阅信息
@@ -197,6 +200,7 @@ class ClaudeAccountService {
           : null,
       scopes: claudeAiOauth ? claudeAiOauth.scopes : [],
       autoStopOnWarning,
+      isBackup,
       useUnifiedUserAgent,
       useUnifiedClientId,
       unifiedClientId,
@@ -545,6 +549,8 @@ class ClaudeAccountService {
             claudeUsage: claudeUsage || null,
             // 添加调度状态
             schedulable: account.schedulable !== 'false', // 默认为true，兼容历史数据
+            // 添加备用账户标记
+            isBackup: account.isBackup === 'true', // 是否为备用账户
             // 添加自动停止调度设置
             autoStopOnWarning: account.autoStopOnWarning === 'true', // 默认为false
             // 添加5小时自动停止状态
@@ -644,6 +650,7 @@ class ClaudeAccountService {
         'accountType',
         'priority',
         'schedulable',
+        'isBackup',
         'subscriptionInfo',
         'autoStopOnWarning',
         'useUnifiedUserAgent',

@@ -686,7 +686,7 @@
                   </span>
                   <span
                     v-if="account.schedulable === false"
-                    class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700"
+                    class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-300"
                   >
                     <i class="fas fa-pause-circle mr-1" />
                     不可调度
@@ -698,6 +698,13 @@
                     >
                       <i class="fas fa-question-circle ml-1 cursor-help text-gray-500" />
                     </el-tooltip>
+                  </span>
+                  <span
+                    v-if="account.isBackup === true || account.isBackup === 'true'"
+                    class="inline-flex items-center rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700 dark:bg-orange-900 dark:text-orange-300"
+                  >
+                    <i class="fas fa-shield-alt mr-1" />
+                    备用账户
                   </span>
                   <span
                     v-if="account.status === 'blocked' && account.errorMessage"
@@ -1113,6 +1120,22 @@
                   >
                     <i :class="['fas', account.schedulable ? 'fa-toggle-on' : 'fa-toggle-off']" />
                     <span class="ml-1">{{ account.schedulable ? '调度' : '停用' }}</span>
+                  </button>
+                  <button
+                    :class="[
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      account.isTogglingBackup
+                        ? 'cursor-not-allowed bg-gray-100 text-gray-400'
+                        : account.isBackup
+                          ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    ]"
+                    :disabled="account.isTogglingBackup"
+                    :title="account.isBackup ? '点击取消备用' : '点击设为备用'"
+                    @click="toggleBackup(account)"
+                  >
+                    <i :class="['fas', account.isBackup ? 'fa-shield-alt' : 'fa-shield']" />
+                    <span class="ml-1">{{ account.isBackup ? '备用' : '设为备用' }}</span>
                   </button>
                   <button
                     v-if="canViewUsage(account)"
@@ -3011,6 +3034,41 @@ const toggleSchedulable = async (account) => {
     showToast('切换调度状态失败', 'error')
   } finally {
     account.isTogglingSchedulable = false
+  }
+}
+
+// 切换备用账户状态
+const toggleBackup = async (account) => {
+  if (account.isTogglingBackup) return
+
+  try {
+    account.isTogglingBackup = true
+
+    const newBackupStatus = !account.isBackup
+    let endpoint
+    let updateData = { isBackup: newBackupStatus }
+
+    if (account.platform === 'claude') {
+      endpoint = `/admin/claude-accounts/${account.id}`
+    } else if (account.platform === 'claude-console') {
+      endpoint = `/admin/claude-console-accounts/${account.id}`
+    } else {
+      showToast('该账户类型暂不支持备用账户设置', 'warning')
+      return
+    }
+
+    const data = await apiClient.put(endpoint, updateData)
+
+    if (data.success) {
+      account.isBackup = newBackupStatus
+      showToast(newBackupStatus ? '已设为备用账户' : '已取消备用账户', 'success')
+    } else {
+      showToast(data.message || '操作失败', 'error')
+    }
+  } catch (error) {
+    showToast('切换备用状态失败', 'error')
+  } finally {
+    account.isTogglingBackup = false
   }
 }
 
