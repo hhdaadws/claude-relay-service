@@ -9163,4 +9163,131 @@ router.post('/droid-accounts/:id/refresh-token', authenticateAdmin, async (req, 
   }
 })
 
+// ==================== Token Multiplier 管理接口 ====================
+
+/**
+ * 获取 Token 倍率配置信息
+ * GET /admin/token-multiplier
+ */
+router.get('/token-multiplier', authenticateAdmin, async (req, res) => {
+  try {
+    const tokenMultiplier = require('../utils/tokenMultiplier')
+    const info = await tokenMultiplier.getInfo()
+
+    return res.json({
+      success: true,
+      data: info
+    })
+  } catch (error) {
+    logger.error('Failed to get token multiplier info:', error)
+    return res.status(500).json({
+      error: 'Failed to get token multiplier info',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * 设置 Token 倍率
+ * PUT /admin/token-multiplier
+ * Body: { multiplier: 1.1, operator: "admin" }
+ */
+router.put('/token-multiplier', authenticateAdmin, async (req, res) => {
+  try {
+    const tokenMultiplier = require('../utils/tokenMultiplier')
+    const { multiplier } = req.body
+
+    if (multiplier === undefined || multiplier === null) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'Multiplier value is required'
+      })
+    }
+
+    // 获取操作者信息（从 JWT 中提取）
+    const operator = req.admin?.username || 'admin'
+
+    const result = await tokenMultiplier.setMultiplier(multiplier, operator)
+
+    if (!result.success) {
+      return res.status(400).json({
+        error: 'Failed to set multiplier',
+        message: result.message
+      })
+    }
+
+    logger.success(`✅ Token multiplier updated to ${multiplier} by ${operator}`)
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: {
+        multiplier: result.value,
+        operator,
+        timestamp: new Date().toISOString()
+      }
+    })
+  } catch (error) {
+    logger.error('Failed to set token multiplier:', error)
+    return res.status(500).json({
+      error: 'Failed to set token multiplier',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * 重置 Token 倍率为默认值 (1.0)
+ * DELETE /admin/token-multiplier
+ */
+router.delete('/token-multiplier', authenticateAdmin, async (req, res) => {
+  try {
+    const tokenMultiplier = require('../utils/tokenMultiplier')
+    const operator = req.admin?.username || 'admin'
+
+    const result = await tokenMultiplier.reset(operator)
+
+    logger.success(`✅ Token multiplier reset to default by ${operator}`)
+
+    return res.json({
+      success: true,
+      message: 'Token multiplier reset to default (1.0)',
+      data: {
+        multiplier: result.value,
+        operator,
+        timestamp: new Date().toISOString()
+      }
+    })
+  } catch (error) {
+    logger.error('Failed to reset token multiplier:', error)
+    return res.status(500).json({
+      error: 'Failed to reset token multiplier',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * 获取 Token 倍率历史记录
+ * GET /admin/token-multiplier/history
+ */
+router.get('/token-multiplier/history', authenticateAdmin, async (req, res) => {
+  try {
+    const tokenMultiplier = require('../utils/tokenMultiplier')
+    const limit = parseInt(req.query.limit) || 20
+    const history = await tokenMultiplier.getHistory(limit)
+
+    return res.json({
+      success: true,
+      data: history
+    })
+  } catch (error) {
+    logger.error('Failed to get token multiplier history:', error)
+    return res.status(500).json({
+      error: 'Failed to get token multiplier history',
+      message: error.message
+    })
+  }
+})
+
 module.exports = router

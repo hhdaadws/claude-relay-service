@@ -13,6 +13,7 @@ const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelH
 const sessionHelper = require('../utils/sessionHelper')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
+const tokenMultiplier = require('../utils/tokenMultiplier')
 const router = express.Router()
 
 function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
@@ -610,6 +611,11 @@ async function handleMessagesRequest(req, res) {
         const jsonData = JSON.parse(response.body)
 
         logger.info('📊 Parsed Claude API response:', JSON.stringify(jsonData, null, 2))
+
+        // ⭐ 应用 Token 倍率（在记录和返回之前）
+        if (jsonData.usage) {
+          jsonData.usage = await tokenMultiplier.applyToUsage(jsonData.usage)
+        }
 
         // 从Claude API响应中提取usage信息（完整的token分类体系）
         if (

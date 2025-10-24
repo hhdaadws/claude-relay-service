@@ -13,6 +13,7 @@ const redis = require('../models/redis')
 const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 const { formatDateWithTimezone } = require('../utils/dateHelper')
 const runtimeAddon = require('../utils/runtimeAddon')
+const tokenMultiplier = require('../utils/tokenMultiplier')
 
 const RUNTIME_EVENT_FMT_CLAUDE_REQ = 'fmtClaudeReq'
 
@@ -1541,9 +1542,48 @@ class ClaudeRelayService {
             const lines = buffer.split('\n')
             buffer = lines.pop() || '' // 保留最后的不完整行
 
-            // 转发已处理的完整行到客户端
-            if (lines.length > 0 && !responseStream.destroyed) {
-              const linesToForward = lines.join('\n') + (lines.length > 0 ? '\n' : '')
+            // ⭐ 在转发前应用 Token 倍率
+            const modifiedLines = []
+            for (const line of lines) {
+              // 检查是否是包含 usage 的数据行
+              if (line.startsWith('data:')) {
+                const jsonStr = line.slice(5).trimStart()
+                if (!jsonStr || jsonStr === '[DONE]') {
+                  modifiedLines.push(line)
+                  continue
+                }
+                try {
+                  const data = JSON.parse(jsonStr)
+
+                  // 应用倍率到 message_start 中的 usage
+                  if (data.type === 'message_start' && data.message && data.message.usage) {
+                    data.message.usage = await tokenMultiplier.applyToUsage(data.message.usage)
+                    modifiedLines.push(`data: ${JSON.stringify(data)}`)
+                    continue
+                  }
+
+                  // 应用倍率到 message_delta 中的 usage
+                  if (data.type === 'message_delta' && data.usage) {
+                    data.usage = await tokenMultiplier.applyToUsage(data.usage)
+                    modifiedLines.push(`data: ${JSON.stringify(data)}`)
+                    continue
+                  }
+
+                  // 其他数据行保持不变
+                  modifiedLines.push(line)
+                } catch (e) {
+                  // JSON 解析失败，保持原样
+                  modifiedLines.push(line)
+                }
+              } else {
+                // 非数据行（如 event:, id: 等），保持不变
+                modifiedLines.push(line)
+              }
+            }
+
+            // 转发修改后的SSE行到客户端
+            if (modifiedLines.length > 0 && !responseStream.destroyed) {
+              const linesToForward = modifiedLines.join('\n') + (modifiedLines.length > 0 ? '\n' : '')
               // 如果有流转换器，应用转换
               if (streamTransformer) {
                 const transformed = streamTransformer(linesToForward)
@@ -1726,7 +1766,7 @@ class ClaudeRelayService {
 
             // 一般一个请求只会使用一个模型，即使有多个usage事件也应该合并
             // 计算总的usage
-            const finalUsage = {
+            let finalUsage = {
               input_tokens: totalUsage.input_tokens,
               output_tokens: totalUsage.output_tokens,
               cache_creation_input_tokens: totalUsage.cache_creation_input_tokens,
@@ -1755,6 +1795,9 @@ class ClaudeRelayService {
                 JSON.stringify(finalUsage.cache_creation)
               )
             }
+
+            // ⭐ 应用 Token 倍率到 finalUsage（确保计费系统记录的是修改后的值）
+            finalUsage = await tokenMultiplier.applyToUsage(finalUsage)
 
             // 调用一次usageCallback记录合并后的数据
             usageCallback(finalUsage)
