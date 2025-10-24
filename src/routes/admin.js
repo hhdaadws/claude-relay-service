@@ -2199,6 +2199,8 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
             ...formattedAccount,
             // 转换schedulable为布尔值
             schedulable: account.schedulable === 'true' || account.schedulable === true,
+            // 转换isBackup为布尔值
+            isBackup: account.isBackup === 'true' || account.isBackup === true,
             groupInfos,
             usage: {
               daily: usageStats.daily,
@@ -2215,6 +2217,10 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
+              // 转换schedulable为布尔值
+              schedulable: account.schedulable === 'true' || account.schedulable === true,
+              // 转换isBackup为布尔值
+              isBackup: account.isBackup === 'true' || account.isBackup === true,
               groupInfos,
               usage: {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
@@ -2232,6 +2238,10 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
             return {
               ...formattedAccount,
               groupInfos: [],
+              // 转换schedulable为布尔值
+              schedulable: account.schedulable === 'true' || account.schedulable === true,
+              // 转换isBackup为布尔值
+              isBackup: account.isBackup === 'true' || account.isBackup === true,
               usage: {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
@@ -2694,6 +2704,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
             ...formattedAccount,
             // 转换schedulable为布尔值
             schedulable: account.schedulable === 'true' || account.schedulable === true,
+            // 转换isBackup为布尔值
+            isBackup: account.isBackup === 'true' || account.isBackup === true,
             groupInfos,
             usage: {
               daily: usageStats.daily,
@@ -2729,6 +2741,10 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
             return {
               ...formattedAccount,
               groupInfos: [],
+              // 转换schedulable为布尔值
+              schedulable: account.schedulable === 'true' || account.schedulable === true,
+              // 转换isBackup为布尔值
+              isBackup: account.isBackup === 'true' || account.isBackup === true,
               usage: {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
@@ -3121,6 +3137,8 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
             ...formattedAccount,
             // 转换schedulable为布尔值
             schedulable: account.schedulable === 'true' || account.schedulable === true,
+            // 转换isBackup为布尔值
+            isBackup: account.isBackup === 'true' || account.isBackup === true,
             groupInfos,
             usage: {
               daily: usageStats.daily,

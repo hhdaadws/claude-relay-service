@@ -3044,7 +3044,9 @@ const toggleBackup = async (account) => {
   try {
     account.isTogglingBackup = true
 
-    const newBackupStatus = !account.isBackup
+    // 正确处理布尔值和字符串格式的 isBackup
+    const currentBackupStatus = account.isBackup === true || account.isBackup === 'true'
+    const newBackupStatus = !currentBackupStatus
     let endpoint
     let updateData = { isBackup: newBackupStatus }
 
