@@ -675,9 +675,49 @@ class ClaudeConsoleRelayService {
               const lines = buffer.split('\n')
               buffer = lines.pop() || ''
 
-              // 转发数据并解析usage
+              // ⭐ 转发数据前应用 Token 倍率（确保用户看到的也是修改后的值）
               if (lines.length > 0 && !responseStream.destroyed) {
-                const linesToForward = lines.join('\n') + (lines.length > 0 ? '\n' : '')
+                const modifiedLines = []
+
+                // 遍历每一行，应用倍率到 usage 数据
+                for (const line of lines) {
+                  if (line.startsWith('data:')) {
+                    const jsonStr = line.slice(5).trimStart()
+                    if (!jsonStr || jsonStr === '[DONE]') {
+                      modifiedLines.push(line)
+                      continue
+                    }
+                    try {
+                      const data = JSON.parse(jsonStr)
+
+                      // 应用倍率到 message_start 中的 usage
+                      if (data.type === 'message_start' && data.message && data.message.usage) {
+                        data.message.usage = await tokenMultiplier.applyToUsage(data.message.usage)
+                        modifiedLines.push(`data: ${JSON.stringify(data)}`)
+                        continue
+                      }
+
+                      // 应用倍率到 message_delta 中的 usage
+                      if (data.type === 'message_delta' && data.usage) {
+                        data.usage = await tokenMultiplier.applyToUsage(data.usage)
+                        modifiedLines.push(`data: ${JSON.stringify(data)}`)
+                        continue
+                      }
+
+                      // 其他数据行保持不变
+                      modifiedLines.push(line)
+                    } catch (e) {
+                      // JSON解析失败，保持原样
+                      modifiedLines.push(line)
+                    }
+                  } else {
+                    // 非data行保持不变
+                    modifiedLines.push(line)
+                  }
+                }
+
+                const linesToForward =
+                  modifiedLines.join('\n') + (modifiedLines.length > 0 ? '\n' : '')
 
                 // 应用流转换器如果有
                 if (streamTransformer) {

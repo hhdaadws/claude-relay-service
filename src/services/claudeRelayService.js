@@ -1532,7 +1532,7 @@ class ClaudeRelayService {
         let rateLimitDetected = false // 限流检测标志
 
         // 监听数据块，解析SSE并寻找usage信息
-        res.on('data', (chunk) => {
+        res.on('data', async (chunk) => {
           try {
             const chunkStr = chunk.toString()
 
@@ -1583,7 +1583,8 @@ class ClaudeRelayService {
 
             // 转发修改后的SSE行到客户端
             if (modifiedLines.length > 0 && !responseStream.destroyed) {
-              const linesToForward = modifiedLines.join('\n') + (modifiedLines.length > 0 ? '\n' : '')
+              const linesToForward =
+                modifiedLines.join('\n') + (modifiedLines.length > 0 ? '\n' : '')
               // 如果有流转换器，应用转换
               if (streamTransformer) {
                 const transformed = streamTransformer(linesToForward)
