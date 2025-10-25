@@ -36,6 +36,18 @@
             <i class="fas fa-bell mr-2"></i>
             通知设置
           </button>
+          <button
+            :class="[
+              'border-b-2 pb-2 text-sm font-medium transition-colors',
+              activeSection === 'pricing'
+                ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+            ]"
+            @click="switchSection('pricing')"
+          >
+            <i class="fas fa-dollar-sign mr-2"></i>
+            定价设置
+          </button>
         </nav>
       </div>
 
@@ -627,6 +639,162 @@
               <i class="fas fa-paper-plane mr-2"></i>
               发送测试通知
             </button>
+          </div>
+        </div>
+
+        <!-- 定价设置部分 -->
+        <div v-show="activeSection === 'pricing'">
+          <!-- Token 倍率配置卡片 -->
+          <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div class="mb-4 flex items-center justify-between">
+              <div>
+                <h4 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  <i class="fas fa-calculator mr-2 text-blue-500"></i>
+                  Token 计费倍率
+                </h4>
+                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  通过修改 token 数量实现动态价格调整（模型价格保持不变）
+                </p>
+              </div>
+              <div v-if="multiplierInfo.isActive" class="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                <i class="fas fa-check-circle mr-1"></i>
+                已启用
+              </div>
+            </div>
+
+            <!-- 当前倍率显示 -->
+            <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div class="rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 p-4 dark:from-blue-900/30 dark:to-blue-800/20">
+                <div class="text-sm font-medium text-gray-600 dark:text-gray-400">当前倍率</div>
+                <div class="mt-2 text-2xl font-bold text-blue-600 dark:text-blue-400">
+                  {{ multiplierInfo.currentMultiplier }}x
+                </div>
+              </div>
+              <div class="rounded-lg bg-gradient-to-br from-purple-50 to-purple-100 p-4 dark:from-purple-900/30 dark:to-purple-800/20">
+                <div class="text-sm font-medium text-gray-600 dark:text-gray-400">价格调整</div>
+                <div class="mt-2 text-2xl font-bold" :class="multiplierInfo.priceAdjustment.startsWith('-') ? 'text-green-600 dark:text-green-400' : multiplierInfo.priceAdjustment === '0%' ? 'text-gray-600 dark:text-gray-400' : 'text-red-600 dark:text-red-400'">
+                  {{ multiplierInfo.priceAdjustment.startsWith('-') ? '' : '+' }}{{ multiplierInfo.priceAdjustment }}
+                </div>
+              </div>
+              <div class="rounded-lg bg-gradient-to-br from-amber-50 to-amber-100 p-4 dark:from-amber-900/30 dark:to-amber-800/20">
+                <div class="text-sm font-medium text-gray-600 dark:text-gray-400">缓存状态</div>
+                <div class="mt-2 text-sm font-medium" :class="multiplierInfo.cache?.isCached ? 'text-green-600 dark:text-green-400' : 'text-gray-600 dark:text-gray-400'">
+                  <i class="fas" :class="multiplierInfo.cache?.isCached ? 'fa-check-circle' : 'fa-circle'"></i>
+                  {{ multiplierInfo.cache?.isCached ? '已缓存 (30s)' : '未缓存' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 倍率输入和操作 -->
+            <div class="space-y-4">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  设置新倍率 ({{ multiplierInfo.range?.min }} - {{ multiplierInfo.range?.max }})
+                </label>
+                <div class="flex gap-3">
+                  <input
+                    v-model.number="newMultiplier"
+                    type="number"
+                    :min="multiplierInfo.range?.min"
+                    :max="multiplierInfo.range?.max"
+                    step="0.05"
+                    class="form-input flex-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                    placeholder="输入倍率值 (如: 1.1)"
+                  />
+                  <button
+                    @click="updateMultiplier"
+                    :disabled="savingMultiplier || !newMultiplier"
+                    class="btn-primary whitespace-nowrap"
+                  >
+                    <i class="mr-2" :class="savingMultiplier ? 'fas fa-spinner fa-spin' : 'fas fa-save'"></i>
+                    {{ savingMultiplier ? '保存中...' : '应用倍率' }}
+                  </button>
+                  <button
+                    @click="resetMultiplier"
+                    :disabled="savingMultiplier"
+                    class="btn-secondary whitespace-nowrap"
+                  >
+                    <i class="mr-2 fas fa-undo"></i>
+                    重置
+                  </button>
+                </div>
+                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  示例：设置为 1.1 相当于价格上调 10%；设置为 0.9 相当于价格下调 10%
+                </p>
+              </div>
+
+              <!-- 预设快捷按钮 -->
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  快捷设置
+                </label>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="preset in [0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2]"
+                    :key="preset"
+                    @click="newMultiplier = preset"
+                    class="rounded-lg border px-3 py-1 text-sm font-medium transition-all hover:scale-105"
+                    :class="newMultiplier === preset ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-900/30 dark:text-blue-300' : 'border-gray-300 text-gray-700 hover:border-blue-400 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-500'"
+                  >
+                    {{ preset }}x
+                    <span class="ml-1 text-xs opacity-75">
+                      ({{ preset > 1 ? '+' : preset < 1 ? '' : '' }}{{ ((preset - 1) * 100).toFixed(0) }}%)
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 说明信息 -->
+            <div class="mt-6 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
+              <h5 class="mb-2 flex items-center text-sm font-medium text-blue-900 dark:text-blue-300">
+                <i class="fas fa-info-circle mr-2"></i>
+                工作原理
+              </h5>
+              <ul class="space-y-1 text-xs text-blue-800 dark:text-blue-400">
+                <li>• 用户 API 返回的 token 数量会乘以倍率</li>
+                <li>• 计费系统也会按修改后的数量计费</li>
+                <li>• 模型价格表保持不变（如 $3/MTok）</li>
+                <li>• 实际效果等同于动态调整价格</li>
+                <li>• 修改后立即对新请求生效（30秒缓存后）</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- 历史记录 -->
+          <div v-if="multiplierHistory.length > 0" class="mt-6 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <h4 class="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <i class="fas fa-history mr-2 text-gray-500"></i>
+              修改历史
+            </h4>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead>
+                  <tr>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">时间</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">倍率</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">调整</th>
+                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">操作者</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                  <tr v-for="(record, index) in multiplierHistory" :key="index" class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
+                      {{ formatTimestamp(record.timestamp) }}
+                    </td>
+                    <td class="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {{ record.multiplier }}x
+                    </td>
+                    <td class="px-4 py-2 text-sm font-medium" :class="record.priceAdjustment.startsWith('-') ? 'text-green-600 dark:text-green-400' : record.priceAdjustment === '0.0%' ? 'text-gray-600 dark:text-gray-400' : 'text-red-600 dark:text-red-400'">
+                      {{ record.priceAdjustment.startsWith('-') ? '' : '+' }}{{ record.priceAdjustment }}
+                    </td>
+                    <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
+                      {{ record.operator }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -1238,6 +1406,7 @@ const switchSection = (section) => {
   console.log('[SettingsView] 切换标签页:', activeSection.value, '->', section)
   activeSection.value = section
   console.log('[SettingsView] 当前激活部分:', activeSection.value)
+  console.log('[SettingsView] activeSection === pricing:', activeSection.value === 'pricing')
 }
 
 // 组件挂载状态
@@ -1314,11 +1483,117 @@ const platformForm = ref({
   ignoreTLS: false
 })
 
+// ==================== Token 倍率配置 ====================
+const multiplierInfo = ref({
+  currentMultiplier: 1.0,
+  isActive: false,
+  priceAdjustment: '0%',
+  range: { min: 0.1, max: 10.0, default: 1.0 },
+  cache: { enabled: true, expirySeconds: 30, isCached: false },
+  recentHistory: []
+})
+
+const multiplierHistory = ref([])
+const newMultiplier = ref(1.0)
+const savingMultiplier = ref(false)
+
+// 加载倍率信息
+const loadMultiplierInfo = async () => {
+  console.log('[TokenMultiplier] 开始加载倍率信息...')
+  try {
+    const response = await apiClient.get('/admin/token-multiplier')
+    console.log('[TokenMultiplier] API响应:', response)
+    if (response.success) {
+      multiplierInfo.value = response.data
+      newMultiplier.value = response.data.currentMultiplier
+      console.log('[TokenMultiplier] 倍率信息加载成功:', multiplierInfo.value)
+    }
+  } catch (error) {
+    console.error('[TokenMultiplier] 加载失败:', error)
+    console.error('[TokenMultiplier] 错误详情:', error.response?.data)
+    showToast('加载倍率配置失败: ' + (error.response?.data?.message || error.message), 'error')
+  }
+}
+
+// 加载倍率历史
+const loadMultiplierHistory = async () => {
+  try {
+    const response = await apiClient.get('/admin/token-multiplier/history?limit=10')
+    if (response.success) {
+      multiplierHistory.value = response.data
+    }
+  } catch (error) {
+    console.error('Failed to load multiplier history:', error)
+  }
+}
+
+// 更新倍率
+const updateMultiplier = async () => {
+  if (!newMultiplier.value || newMultiplier.value < 0.1 || newMultiplier.value > 10) {
+    showToast('倍率值必须在 0.1 - 10.0 之间', 'warning')
+    return
+  }
+
+  try {
+    savingMultiplier.value = true
+    const response = await apiClient.put('/admin/token-multiplier', {
+      multiplier: newMultiplier.value
+    })
+
+    if (response.success) {
+      showToast(`倍率已更新为 ${newMultiplier.value}x`, 'success')
+      await loadMultiplierInfo()
+      await loadMultiplierHistory()
+    }
+  } catch (error) {
+    console.error('Failed to update multiplier:', error)
+    showToast(error.response?.data?.message || '更新倍率失败', 'error')
+  } finally {
+    savingMultiplier.value = false
+  }
+}
+
+// 重置倍率
+const resetMultiplier = async () => {
+  try {
+    savingMultiplier.value = true
+    const response = await apiClient.delete('/admin/token-multiplier')
+
+    if (response.success) {
+      showToast('倍率已重置为默认值 1.0', 'success')
+      newMultiplier.value = 1.0
+      await loadMultiplierInfo()
+      await loadMultiplierHistory()
+    }
+  } catch (error) {
+    console.error('Failed to reset multiplier:', error)
+    showToast('重置倍率失败', 'error')
+  } finally {
+    savingMultiplier.value = false
+  }
+}
+
+// 格式化时间戳
+const formatTimestamp = (timestamp) => {
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
 // 监听activeSection变化，加载对应配置
 const sectionWatcher = watch(activeSection, async (newSection) => {
   if (!isMounted.value) return
   if (newSection === 'webhook') {
     await loadWebhookConfig()
+  } else if (newSection === 'pricing') {
+    await loadMultiplierInfo()
+    await loadMultiplierHistory()
   }
 })
 

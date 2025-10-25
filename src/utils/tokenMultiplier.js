@@ -68,6 +68,7 @@ class TokenMultiplier {
       this.cachedMultiplier = multiplier
       this.cacheTime = now
 
+      logger.info(`📊 Token multiplier loaded: ${multiplier} (cached for 30s)`)
       logger.debug(`📊 Token multiplier loaded: ${multiplier} (cached for 30s)`)
       return multiplier
     } catch (error) {
@@ -112,9 +113,7 @@ class TokenMultiplier {
       this.cachedMultiplier = null
       this.cacheTime = null
 
-      logger.success(
-        `✅ Token multiplier updated: ${multiplier} (operator: ${operator})`
-      )
+      logger.success(`✅ Token multiplier updated: ${multiplier} (operator: ${operator})`)
 
       return {
         success: true,
@@ -144,8 +143,14 @@ class TokenMultiplier {
 
       const multiplier = await this.getMultiplier()
 
+      // ⭐ 添加可见日志
+      logger.info(
+        `🔢 applyToUsage called - multiplier: ${multiplier}, has usage: ${!!usage}, input: ${usage.input_tokens}, output: ${usage.output_tokens}`
+      )
+
       // 如果倍率为 1.0，不需要修改
       if (multiplier === 1.0) {
+        logger.info(`⏭️ Multiplier is 1.0, skipping modification`)
         return usage
       }
 
@@ -192,6 +197,11 @@ class TokenMultiplier {
 
       // 记录调试信息（仅在倍率不为1时）
       if (multiplier !== 1.0) {
+        logger.info(
+          `✅ Applied token multiplier ${multiplier}: ` +
+            `input ${usage.input_tokens || 0} → ${modifiedUsage.input_tokens || 0}, ` +
+            `output ${usage.output_tokens || 0} → ${modifiedUsage.output_tokens || 0}`
+        )
         logger.debug(
           `🔢 Applied token multiplier ${multiplier}: ` +
             `input ${usage.input_tokens || 0} → ${modifiedUsage.input_tokens || 0}, ` +
@@ -217,13 +227,15 @@ class TokenMultiplier {
       const client = redis.getClientSafe()
       const records = await client.lrange(this.historyKey, 0, limit - 1)
 
-      return records.map((record) => {
-        try {
-          return JSON.parse(record)
-        } catch (e) {
-          return null
-        }
-      }).filter(Boolean)
+      return records
+        .map((record) => {
+          try {
+            return JSON.parse(record)
+          } catch (e) {
+            return null
+          }
+        })
+        .filter(Boolean)
     } catch (error) {
       logger.error('❌ Failed to get token multiplier history:', error)
       return []

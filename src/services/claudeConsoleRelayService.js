@@ -2,6 +2,7 @@ const axios = require('axios')
 const claudeConsoleAccountService = require('./claudeConsoleAccountService')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
+const tokenMultiplier = require('../utils/tokenMultiplier')
 const {
   sanitizeUpstreamError,
   sanitizeErrorMessage,
@@ -661,7 +662,7 @@ class ClaudeConsoleRelayService {
           }
 
           // 处理流数据
-          response.data.on('data', (chunk) => {
+          response.data.on('data', async (chunk) => {
             try {
               if (aborted) {
                 return
@@ -777,7 +778,10 @@ class ClaudeConsoleRelayService {
                             '🎯 [Console] Complete usage data collected:',
                             JSON.stringify(collectedUsageData)
                           )
-                          usageCallback({ ...collectedUsageData, accountId })
+                          // ⭐ 应用 Token 倍率到 finalUsage（确保计费系统记录的是修改后的值）
+                          let finalUsage = { ...collectedUsageData, accountId }
+                          finalUsage = await tokenMultiplier.applyToUsage(finalUsage)
+                          usageCallback(finalUsage)
                           finalUsageReported = true
                         }
                       }
@@ -807,7 +811,7 @@ class ClaudeConsoleRelayService {
             }
           })
 
-          response.data.on('end', () => {
+          response.data.on('end', async () => {
             try {
               // 处理缓冲区中剩余的数据
               if (buffer.trim() && !responseStream.destroyed) {
@@ -847,7 +851,10 @@ class ClaudeConsoleRelayService {
                   logger.info(
                     `📊 [Console] Saving incomplete usage data via fallback: ${JSON.stringify(collectedUsageData)}`
                   )
-                  usageCallback({ ...collectedUsageData, accountId })
+                  // ⭐ 应用 Token 倍率到 finalUsage（确保计费系统记录的是修改后的值）
+                  let finalUsage = { ...collectedUsageData, accountId }
+                  finalUsage = await tokenMultiplier.applyToUsage(finalUsage)
+                  usageCallback(finalUsage)
                   finalUsageReported = true
                 } else {
                   logger.warn(
