@@ -279,6 +279,21 @@ class ClaudeRelayService {
               sessionHash
             )
           }
+
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            '401 unauthorized error'
+          )
+          if (backupResponse) {
+            return backupResponse
+          }
         }
         // 检查是否为403状态码（禁止访问）
         else if (response.statusCode === 403) {
@@ -286,6 +301,21 @@ class ClaudeRelayService {
             `🚫 Forbidden error (403) detected for account ${accountId}, marking as blocked`
           )
           await unifiedClaudeScheduler.markAccountBlocked(accountId, accountType, sessionHash)
+
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            '403 forbidden error'
+          )
+          if (backupResponse) {
+            return backupResponse
+          }
         }
         // 检查是否返回组织被禁用错误（400状态码）
         else if (organizationDisabledError) {
@@ -293,12 +323,25 @@ class ClaudeRelayService {
             `🚫 Organization disabled error (400) detected for account ${accountId}, marking as blocked`
           )
           await unifiedClaudeScheduler.markAccountBlocked(accountId, accountType, sessionHash)
+
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            '400 organization disabled error'
+          )
+          if (backupResponse) {
+            return backupResponse
+          }
         }
         // 检查是否为529状态码（服务过载）- 尝试切换到备用账户
         else if (response.statusCode === 529) {
-          logger.warn(
-            `🚫 Overload error (529) detected for account ${accountId}`
-          )
+          logger.warn(`🚫 Overload error (529) detected for account ${accountId}`)
 
           // 检查是否启用了529错误处理
           if (config.claude.overloadHandling.enabled > 0) {
@@ -314,147 +357,39 @@ class ClaudeRelayService {
             logger.info(`🚫 529 error handling is disabled, skipping account overload marking`)
           }
 
-          // 检查当前账户是否已经是备用账户
-          const currentIsBackup = account.isBackup === 'true' || account.isBackup === true
-
-          if (currentIsBackup) {
-            // 如果当前账户已经是备用账户，不再尝试切换，直接返回错误
-            logger.warn(
-              `⚠️ Current account ${accountId} is already a backup account, cannot switch to another backup. Returning error to client.`
-            )
-            // 继续返回原始错误响应（在方法末尾处理）
-          } else {
-            // 当前账户不是备用账户，尝试切换到备用账户并重试
-            logger.info(
-              `🔄 Current account ${accountId} is not a backup account, attempting to switch to backup account`
-            )
-
-            try {
-              const backupSelection = await unifiedClaudeScheduler.switchToBackupAccount(
-                apiKeyData,
-                sessionHash,
-                requestBody.model,
-                accountId
-              )
-
-              if (backupSelection && backupSelection.isBackupAccount) {
-                logger.success(
-                  `✅ Switched to backup account ${backupSelection.accountId} due to 529 error, retrying request`
-                )
-
-                // 使用备用账户重试请求
-                const backupAccountId = backupSelection.accountId
-                const backupAccountType = backupSelection.accountType
-                const backupAccessToken =
-                  await claudeAccountService.getValidAccessToken(backupAccountId)
-                const backupAccount = await claudeAccountService.getAccount(backupAccountId)
-                const backupProcessedBody = this._processRequestBody(requestBody, backupAccount)
-                const backupProxyAgent = await this._getProxyAgent(backupAccountId)
-
-                // 使用备用账户发起新请求
-                const backupResponse = await this._makeClaudeRequest(
-                  backupProcessedBody,
-                  backupAccessToken,
-                  backupProxyAgent,
-                  clientHeaders,
-                  backupAccountId,
-                  (req) => {
-                    upstreamRequest = req
-                  },
-                  options
-                )
-
-                backupResponse.accountId = backupAccountId
-                backupResponse.accountType = backupAccountType
-                backupResponse.isBackupAccount = true
-
-                logger.success(
-                  `✅ Backup account request succeeded with status ${backupResponse.statusCode}`
-                )
-
-                return backupResponse
-              }
-            } catch (backupError) {
-              logger.warn(
-                `⚠️ Failed to switch to backup account or backup request failed: ${backupError.message}`
-              )
-              // 继续返回原始错误响应
-            }
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            '529 overload error'
+          )
+          if (backupResponse) {
+            return backupResponse
           }
         }
         // 检查是否为5xx状态码 - 尝试切换到备用账户
         else if (response.statusCode >= 500 && response.statusCode < 600) {
-          logger.warn(
-            `🔥 Server error (${response.statusCode}) detected for account ${accountId}`
-          )
+          logger.warn(`🔥 Server error (${response.statusCode}) detected for account ${accountId}`)
           await this._handleServerError(accountId, response.statusCode, sessionHash)
 
-          // 检查当前账户是否已经是备用账户
-          const currentIsBackup = account.isBackup === 'true' || account.isBackup === true
-
-          if (currentIsBackup) {
-            // 如果当前账户已经是备用账户，不再尝试切换，直接返回错误
-            logger.warn(
-              `⚠️ Current account ${accountId} is already a backup account, cannot switch to another backup. Returning error to client.`
-            )
-            // 继续返回原始错误响应（在方法末尾处理）
-          } else {
-            // 当前账户不是备用账户，尝试切换到备用账户并重试
-            logger.info(
-              `🔄 Current account ${accountId} is not a backup account, attempting to switch to backup account`
-            )
-
-            try {
-              const backupSelection = await unifiedClaudeScheduler.switchToBackupAccount(
-                apiKeyData,
-                sessionHash,
-                requestBody.model,
-                accountId
-              )
-
-              if (backupSelection && backupSelection.isBackupAccount) {
-                logger.success(
-                  `✅ Switched to backup account ${backupSelection.accountId}, retrying request`
-                )
-
-                // 使用备用账户重试请求
-                const backupAccountId = backupSelection.accountId
-                const backupAccountType = backupSelection.accountType
-                const backupAccessToken =
-                  await claudeAccountService.getValidAccessToken(backupAccountId)
-                const backupAccount = await claudeAccountService.getAccount(backupAccountId)
-                const backupProcessedBody = this._processRequestBody(requestBody, backupAccount)
-                const backupProxyAgent = await this._getProxyAgent(backupAccountId)
-
-                // 使用备用账户发起新请求
-                const backupResponse = await this._makeClaudeRequest(
-                  backupProcessedBody,
-                  backupAccessToken,
-                  backupProxyAgent,
-                  clientHeaders,
-                  backupAccountId,
-                  (req) => {
-                    upstreamRequest = req
-                  },
-                  options
-                )
-
-                backupResponse.accountId = backupAccountId
-                backupResponse.accountType = backupAccountType
-                backupResponse.isBackupAccount = true
-
-                logger.success(
-                  `✅ Backup account request succeeded with status ${backupResponse.statusCode}`
-                )
-
-                return backupResponse
-              }
-            } catch (backupError) {
-              logger.warn(
-                `⚠️ Failed to switch to backup account or backup request failed: ${backupError.message}`
-              )
-              // 继续返回原始错���响应
-            }
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            `${response.statusCode} server error`
+          )
+          if (backupResponse) {
+            return backupResponse
           }
         }
         // 检查是否为429状态码
@@ -536,6 +471,21 @@ class ClaudeRelayService {
             sessionHash,
             rateLimitResetTimestamp
           )
+
+          // 尝试切换到备用账户
+          const backupResponse = await this._tryBackupAccount(
+            account,
+            accountId,
+            apiKeyData,
+            sessionHash,
+            requestBody,
+            clientHeaders,
+            options,
+            '429 rate limit error'
+          )
+          if (backupResponse) {
+            return backupResponse
+          }
 
           if (dedicatedRateLimitMessage) {
             return {
@@ -2113,6 +2063,87 @@ class ClaudeRelayService {
     } catch (handlingError) {
       logger.error(`❌ Failed to handle ${context} server error:`, handlingError)
     }
+  }
+
+  // 🔄 尝试使用备用账户重试请求的通用方法
+  async _tryBackupAccount(
+    account,
+    accountId,
+    apiKeyData,
+    sessionHash,
+    requestBody,
+    clientHeaders,
+    options,
+    errorReason
+  ) {
+    // 检查当前账户是否已经是备用账户
+    const currentIsBackup = account.isBackup === 'true' || account.isBackup === true
+
+    if (currentIsBackup) {
+      // 如果当前账户已经是备用账户，不再尝试切换，直接返回null
+      logger.warn(
+        `⚠️ Current account ${accountId} is already a backup account, cannot switch to another backup. Returning error to client.`
+      )
+      return null
+    }
+
+    // 当前账户不是备用账户，尝试切换到备用账户并重试
+    logger.info(
+      `🔄 Current account ${accountId} is not a backup account, attempting to switch to backup account due to ${errorReason}`
+    )
+
+    try {
+      const backupSelection = await unifiedClaudeScheduler.switchToBackupAccount(
+        apiKeyData,
+        sessionHash,
+        requestBody.model,
+        accountId
+      )
+
+      if (backupSelection && backupSelection.isBackupAccount) {
+        logger.success(
+          `✅ Switched to backup account ${backupSelection.accountId} due to ${errorReason}, retrying request`
+        )
+
+        // 使用备用账户重试请求
+        const backupAccountId = backupSelection.accountId
+        const backupAccountType = backupSelection.accountType
+        const backupAccessToken = await claudeAccountService.getValidAccessToken(backupAccountId)
+        const backupAccount = await claudeAccountService.getAccount(backupAccountId)
+        const backupProcessedBody = this._processRequestBody(requestBody, backupAccount)
+        const backupProxyAgent = await this._getProxyAgent(backupAccountId)
+
+        let upstreamRequest = null
+        // 使用备用账户发起新请求
+        const backupResponse = await this._makeClaudeRequest(
+          backupProcessedBody,
+          backupAccessToken,
+          backupProxyAgent,
+          clientHeaders,
+          backupAccountId,
+          (req) => {
+            upstreamRequest = req
+          },
+          options
+        )
+
+        backupResponse.accountId = backupAccountId
+        backupResponse.accountType = backupAccountType
+        backupResponse.isBackupAccount = true
+
+        logger.success(
+          `✅ Backup account request succeeded with status ${backupResponse.statusCode}`
+        )
+
+        return backupResponse
+      }
+    } catch (backupError) {
+      logger.warn(
+        `⚠️ Failed to switch to backup account or backup request failed: ${backupError.message}`
+      )
+    }
+
+    return null
   }
 
   // 🔄 重试逻辑
