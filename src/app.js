@@ -465,25 +465,107 @@ class Application {
     try {
       await this.initialize()
 
-      this.server = this.app.listen(config.server.port, config.server.host, () => {
-        logger.start(
-          `🚀 Claude Relay Service started on ${config.server.host}:${config.server.port}`
-        )
-        logger.info(
-          `🌐 Web interface: http://${config.server.host}:${config.server.port}/admin-next/api-stats`
-        )
-        logger.info(
-          `🔗 API endpoint: http://${config.server.host}:${config.server.port}/api/v1/messages`
-        )
-        logger.info(`⚙️  Admin API: http://${config.server.host}:${config.server.port}/admin`)
-        logger.info(`🏥 Health check: http://${config.server.host}:${config.server.port}/health`)
-        logger.info(`📊 Metrics: http://${config.server.host}:${config.server.port}/metrics`)
-      })
+      const httpEnabled = config.server.httpEnabled !== false
+      const httpsEnabled = config.server.https?.enabled === true
 
-      const serverTimeout = 600000 // 默认10分钟
-      this.server.timeout = serverTimeout
-      this.server.keepAliveTimeout = serverTimeout + 5000 // keepAlive 稍长一点
-      logger.info(`⏱️  Server timeout set to ${serverTimeout}ms (${serverTimeout / 1000}s)`)
+      // 验证至少启用一个服务器
+      if (!httpEnabled && !httpsEnabled) {
+        throw new Error(
+          '至少需要启用 HTTP 或 HTTPS 服务器之一 (HTTP_ENABLED=true or HTTPS_ENABLED=true)'
+        )
+      }
+
+      logger.info(
+        `🚀 Server mode: ${httpEnabled ? 'HTTP' : ''}${httpEnabled && httpsEnabled ? ' + ' : ''}${httpsEnabled ? 'HTTPS' : ''}`
+      )
+
+      // 🔒 启动 HTTPS 服务器
+      if (httpsEnabled) {
+        logger.info('🔒 Initializing HTTPS server...')
+
+        const https = require('https')
+        const fs = require('fs')
+
+        try {
+          // 验证证书文件
+          if (!fs.existsSync(config.server.https.certPath)) {
+            throw new Error(`Certificate file not found: ${config.server.https.certPath}`)
+          }
+          if (!fs.existsSync(config.server.https.keyPath)) {
+            throw new Error(`Private key file not found: ${config.server.https.keyPath}`)
+          }
+
+          const httpsOptions = {
+            cert: fs.readFileSync(config.server.https.certPath),
+            key: fs.readFileSync(config.server.https.keyPath)
+          }
+
+          // 创建 HTTPS 服务器
+          this.httpsServer = https.createServer(httpsOptions, this.app)
+
+          const serverTimeout = 600000 // 默认10分钟
+          this.httpsServer.timeout = serverTimeout
+          this.httpsServer.keepAliveTimeout = serverTimeout + 5000
+
+          this.httpsServer.listen(config.server.https.port, config.server.host, () => {
+            logger.start(
+              `🔒 HTTPS server started on ${config.server.host}:${config.server.https.port}`
+            )
+            logger.info(
+              `🌐 Web interface: https://${config.server.host}:${config.server.https.port}/admin-next/api-stats`
+            )
+            logger.info(
+              `🔗 API endpoint: https://${config.server.host}:${config.server.https.port}/api/v1/messages`
+            )
+            logger.info(
+              `⚙️  Admin API: https://${config.server.host}:${config.server.https.port}/admin`
+            )
+            logger.info(
+              `🏥 Health check: https://${config.server.host}:${config.server.https.port}/health`
+            )
+            logger.info(
+              `📊 Metrics: https://${config.server.host}:${config.server.https.port}/metrics`
+            )
+          })
+
+          logger.info(`⏱️  HTTPS server timeout set to ${serverTimeout}ms (${serverTimeout / 1000}s)`)
+        } catch (certError) {
+          logger.error('💥 Failed to load SSL certificates:', certError)
+          logger.error('   Please check HTTPS_CERT_PATH and HTTPS_KEY_PATH configuration')
+          throw certError
+        }
+      }
+
+      // 🌐 启动 HTTP 服务器
+      if (httpEnabled) {
+        logger.info('🌐 Initializing HTTP server...')
+
+        this.httpServer = this.app.listen(config.server.port, config.server.host, () => {
+          logger.start(
+            `🚀 HTTP server started on ${config.server.host}:${config.server.port}`
+          )
+          logger.info(
+            `🌐 Web interface: http://${config.server.host}:${config.server.port}/admin-next/api-stats`
+          )
+          logger.info(
+            `🔗 API endpoint: http://${config.server.host}:${config.server.port}/api/v1/messages`
+          )
+          logger.info(`⚙️  Admin API: http://${config.server.host}:${config.server.port}/admin`)
+          logger.info(
+            `🏥 Health check: http://${config.server.host}:${config.server.port}/health`
+          )
+          logger.info(`📊 Metrics: http://${config.server.host}:${config.server.port}/metrics`)
+        })
+
+        const serverTimeout = 600000 // 默认10分钟
+        this.httpServer.timeout = serverTimeout
+        this.httpServer.keepAliveTimeout = serverTimeout + 5000
+
+        logger.info(`⏱️  HTTP server timeout set to ${serverTimeout}ms (${serverTimeout / 1000}s)`)
+      }
+
+      // 设置 this.server 引用以保持向后兼容
+      this.server = this.httpsServer || this.httpServer
 
       // 🔄 定期清理任务
       this.startCleanupTasks()
@@ -629,70 +711,97 @@ class Application {
     const shutdown = async (signal) => {
       logger.info(`🛑 Received ${signal}, starting graceful shutdown...`)
 
-      if (this.server) {
-        this.server.close(async () => {
-          logger.info('🚪 HTTP server closed')
+      let serversToClose = 0
+      let serversClosed = 0
 
-          // 清理 pricing service 的文件监听器
-          try {
-            pricingService.cleanup()
-            logger.info('💰 Pricing service cleaned up')
-          } catch (error) {
-            logger.error('❌ Error cleaning up pricing service:', error)
+      const performCleanup = async () => {
+        // 清理 pricing service 的文件监听器
+        try {
+          pricingService.cleanup()
+          logger.info('💰 Pricing service cleaned up')
+        } catch (error) {
+          logger.error('❌ Error cleaning up pricing service:', error)
+        }
+
+        // 清理 model service 的文件监听器
+        try {
+          const modelService = require('./services/modelService')
+          modelService.cleanup()
+          logger.info('📋 Model service cleaned up')
+        } catch (error) {
+          logger.error('❌ Error cleaning up model service:', error)
+        }
+
+        // 停止限流清理服务
+        try {
+          const rateLimitCleanupService = require('./services/rateLimitCleanupService')
+          rateLimitCleanupService.stop()
+          logger.info('🚨 Rate limit cleanup service stopped')
+        } catch (error) {
+          logger.error('❌ Error stopping rate limit cleanup service:', error)
+        }
+
+        // 🔢 清理所有并发计数（Phase 1 修复：防止重启泄漏）
+        try {
+          logger.info('🔢 Cleaning up all concurrency counters...')
+          const keys = await redis.keys('concurrency:*')
+          if (keys.length > 0) {
+            await redis.client.del(...keys)
+            logger.info(`✅ Cleaned ${keys.length} concurrency keys`)
+          } else {
+            logger.info('✅ No concurrency keys to clean')
           }
+        } catch (error) {
+          logger.error('❌ Error cleaning up concurrency counters:', error)
+          // 不阻止退出流程
+        }
 
-          // 清理 model service 的文件监听器
-          try {
-            const modelService = require('./services/modelService')
-            modelService.cleanup()
-            logger.info('📋 Model service cleaned up')
-          } catch (error) {
-            logger.error('❌ Error cleaning up model service:', error)
-          }
+        try {
+          await redis.disconnect()
+          logger.info('👋 Redis disconnected')
+        } catch (error) {
+          logger.error('❌ Error disconnecting Redis:', error)
+        }
 
-          // 停止限流清理服务
-          try {
-            const rateLimitCleanupService = require('./services/rateLimitCleanupService')
-            rateLimitCleanupService.stop()
-            logger.info('🚨 Rate limit cleanup service stopped')
-          } catch (error) {
-            logger.error('❌ Error stopping rate limit cleanup service:', error)
-          }
-
-          // 🔢 清理所有并发计数（Phase 1 修复：防止重启泄漏）
-          try {
-            logger.info('🔢 Cleaning up all concurrency counters...')
-            const keys = await redis.keys('concurrency:*')
-            if (keys.length > 0) {
-              await redis.client.del(...keys)
-              logger.info(`✅ Cleaned ${keys.length} concurrency keys`)
-            } else {
-              logger.info('✅ No concurrency keys to clean')
-            }
-          } catch (error) {
-            logger.error('❌ Error cleaning up concurrency counters:', error)
-            // 不阻止退出流程
-          }
-
-          try {
-            await redis.disconnect()
-            logger.info('👋 Redis disconnected')
-          } catch (error) {
-            logger.error('❌ Error disconnecting Redis:', error)
-          }
-
-          logger.success('✅ Graceful shutdown completed')
-          process.exit(0)
-        })
-
-        // 强制关闭超时
-        setTimeout(() => {
-          logger.warn('⚠️ Forced shutdown due to timeout')
-          process.exit(1)
-        }, 10000)
-      } else {
+        logger.success('✅ Graceful shutdown completed')
         process.exit(0)
       }
+
+      const onServerClosed = () => {
+        serversClosed++
+        if (serversClosed === serversToClose) {
+          performCleanup()
+        }
+      }
+
+      // 关闭 HTTPS 服务器
+      if (this.httpsServer) {
+        serversToClose++
+        this.httpsServer.close(() => {
+          logger.info('🔒 HTTPS server closed')
+          onServerClosed()
+        })
+      }
+
+      // 关闭 HTTP 服务器
+      if (this.httpServer) {
+        serversToClose++
+        this.httpServer.close(() => {
+          logger.info('🌐 HTTP server closed')
+          onServerClosed()
+        })
+      }
+
+      // 如果没有服务器在运行，直接退出
+      if (serversToClose === 0) {
+        await performCleanup()
+      }
+
+      // 强制关闭超时
+      setTimeout(() => {
+        logger.warn('⚠️ Forced shutdown due to timeout')
+        process.exit(1)
+      }, 10000)
     }
 
     process.on('SIGTERM', () => shutdown('SIGTERM'))
