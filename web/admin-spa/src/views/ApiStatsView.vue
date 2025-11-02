@@ -137,6 +137,11 @@
 
           <!-- 模型使用统计 -->
           <ModelUsageStats />
+
+          <!-- 使用历史记录 -->
+          <div class="mt-6 md:mt-8">
+            <UsageHistory v-if="apiId && apiKey" :api-key-id="apiId" :api-key-value="apiKey" />
+          </div>
         </div>
       </div>
     </div>
@@ -162,6 +167,7 @@ import ApiKeyInput from '@/components/apistats/ApiKeyInput.vue'
 import StatsOverview from '@/components/apistats/StatsOverview.vue'
 import TokenDistribution from '@/components/apistats/TokenDistribution.vue'
 import LimitConfig from '@/components/apistats/LimitConfig.vue'
+import UsageHistory from '@/components/apistats/UsageHistory.vue'
 import AggregatedStatsCard from '@/components/apistats/AggregatedStatsCard.vue'
 import ModelUsageStats from '@/components/apistats/ModelUsageStats.vue'
 import TutorialView from './TutorialView.vue'

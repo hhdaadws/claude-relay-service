@@ -13,6 +13,8 @@ const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelH
 const sessionHelper = require('../utils/sessionHelper')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
+const redis = require('../models/redis')
+const CostCalculator = require('../utils/costCalculator')
 const router = express.Router()
 
 function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
@@ -915,6 +917,210 @@ router.get('/v1/me', authenticateApiKey, async (req, res) => {
       error: 'Failed to get user info',
       message: error.message
     })
+  }
+})
+
+// 📊 使用历史记录端点 - 过去7天详细 + 7天前总和
+router.get('/v1/usage/history', authenticateApiKey, async (req, res) => {
+  try {
+    const keyId = req.apiKey.id
+
+    logger.info(`📊 Getting usage history for API key: ${keyId}`)
+
+    const client = redis.getClientSafe()
+    const DETAIL_DAYS = 7 // 提供详细数据的天数
+
+    // 获取模型费用计算辅助函数
+    const sumModelCostsForDay = async (dateKey) => {
+      const modelPattern = `usage:${keyId}:model:daily:*:${dateKey}`
+      const modelKeys = await client.keys(modelPattern)
+      let summedCost = 0
+
+      if (modelKeys.length === 0) {
+        return summedCost
+      }
+
+      for (const modelKey of modelKeys) {
+        const modelParts = modelKey.split(':')
+        const modelName = modelParts[4] || 'unknown'
+        const modelData = await client.hgetall(modelKey)
+        if (!modelData || Object.keys(modelData).length === 0) {
+          continue
+        }
+
+        const usage = {
+          input_tokens: parseInt(modelData.inputTokens) || 0,
+          output_tokens: parseInt(modelData.outputTokens) || 0,
+          cache_creation_input_tokens: parseInt(modelData.cacheCreateTokens) || 0,
+          cache_read_input_tokens: parseInt(modelData.cacheReadTokens) || 0
+        }
+
+        const costResult = CostCalculator.calculateCost(usage, modelName)
+        summedCost += costResult.costs.total
+      }
+
+      return summedCost
+    }
+
+    // 收集过去7天的详细数据
+    const detailedHistory = []
+    let last7DaysCost = 0
+    let last7DaysRequests = 0
+    let last7DaysTokens = 0
+
+    const today = new Date()
+
+    for (let offset = DETAIL_DAYS - 1; offset >= 0; offset--) {
+      const date = new Date(today)
+      date.setDate(date.getDate() - offset)
+
+      const tzDate = redis.getDateInTimezone(date)
+      const dateKey = redis.getDateStringInTimezone(date)
+      const monthLabel = String(tzDate.getUTCMonth() + 1).padStart(2, '0')
+      const dayLabel = String(tzDate.getUTCDate()).padStart(2, '0')
+      const label = `${monthLabel}/${dayLabel}`
+
+      const dailyKey = `usage:daily:${keyId}:${dateKey}`
+      const dailyData = await client.hgetall(dailyKey)
+
+      const inputTokens = parseInt(dailyData?.inputTokens) || 0
+      const outputTokens = parseInt(dailyData?.outputTokens) || 0
+      const cacheCreateTokens = parseInt(dailyData?.cacheCreateTokens) || 0
+      const cacheReadTokens = parseInt(dailyData?.cacheReadTokens) || 0
+      const allTokens =
+        parseInt(dailyData?.allTokens) ||
+        inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
+      const requests = parseInt(dailyData?.requests) || 0
+
+      // 计算该天的费用（基于模型级别数据）
+      let cost = await sumModelCostsForDay(dateKey)
+
+      // 如果没有模型级别数据，使用回退方案
+      if (cost === 0 && allTokens > 0) {
+        const fallbackUsage = {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_creation_input_tokens: cacheCreateTokens,
+          cache_read_input_tokens: cacheReadTokens
+        }
+        const fallbackCostResult = CostCalculator.calculateCost(
+          fallbackUsage,
+          'claude-3-5-sonnet-20241022'
+        )
+        cost = fallbackCostResult.costs.total
+      }
+
+      detailedHistory.push({
+        date: dateKey,
+        label,
+        cost,
+        formattedCost: CostCalculator.formatCost(cost),
+        requests,
+        tokens: allTokens,
+        inputTokens,
+        outputTokens,
+        cacheCreateTokens,
+        cacheReadTokens
+      })
+
+      last7DaysCost += cost
+      last7DaysRequests += requests
+      last7DaysTokens += allTokens
+    }
+
+    // 计算7天以前的总和（从总数据中减去最近7天）
+    const usageStats = await apiKeyService.getUsageStats(keyId)
+    const totalUsage = usageStats.total || {}
+    const totalCost = req.apiKey.totalCost || 0
+
+    const before7DaysCost = Math.max(0, totalCost - last7DaysCost)
+    const before7DaysRequests = Math.max(0, (totalUsage.requests || 0) - last7DaysRequests)
+    const before7DaysTokens = Math.max(
+      0,
+      (totalUsage.allTokens || totalUsage.tokens || 0) - last7DaysTokens
+    )
+
+    // 计算统计摘要
+    const actualDaysUsed = detailedHistory.filter((day) => day.requests > 0).length
+    const avgDailyCost = actualDaysUsed > 0 ? last7DaysCost / actualDaysUsed : 0
+    const avgDailyRequests = actualDaysUsed > 0 ? last7DaysRequests / actualDaysUsed : 0
+    const avgDailyTokens = actualDaysUsed > 0 ? last7DaysTokens / actualDaysUsed : 0
+
+    // 找出最高消费和最高请求的日期
+    let highestCostDay = null
+    let highestRequestDay = null
+
+    for (const day of detailedHistory) {
+      if (!highestCostDay || day.cost > highestCostDay.cost) {
+        highestCostDay = day
+      }
+      if (!highestRequestDay || day.requests > highestRequestDay.requests) {
+        highestRequestDay = day
+      }
+    }
+
+    // 计算总的活跃天数
+    const keyCreatedAt = req.apiKey.createdAt ? new Date(req.apiKey.createdAt) : null
+    let totalDaysUsed = actualDaysUsed
+    if (before7DaysRequests > 0 && keyCreatedAt) {
+      const daysSinceCreation = Math.floor((today - keyCreatedAt) / (1000 * 60 * 60 * 24))
+      totalDaysUsed = Math.min(
+        daysSinceCreation,
+        totalDaysUsed + Math.ceil(before7DaysRequests / Math.max(1, avgDailyRequests))
+      )
+    }
+
+    const response = {
+      success: true,
+      data: {
+        detailedHistory,
+        before7Days: {
+          cost: before7DaysCost,
+          formattedCost: CostCalculator.formatCost(before7DaysCost),
+          requests: before7DaysRequests,
+          tokens: before7DaysTokens
+        },
+        summary: {
+          detailDays: DETAIL_DAYS,
+          actualDaysUsed,
+          totalDaysUsed,
+          last7Days: {
+            totalCost: last7DaysCost,
+            totalRequests: last7DaysRequests,
+            totalTokens: last7DaysTokens,
+            formattedCost: CostCalculator.formatCost(last7DaysCost)
+          },
+          allTime: {
+            totalCost,
+            totalRequests: totalUsage.requests || 0,
+            totalTokens: totalUsage.allTokens || totalUsage.tokens || 0,
+            formattedCost: CostCalculator.formatCost(totalCost)
+          },
+          averages: {
+            dailyCost: avgDailyCost,
+            dailyRequests: avgDailyRequests,
+            dailyTokens: avgDailyTokens,
+            formattedDailyCost: CostCalculator.formatCost(avgDailyCost)
+          },
+          highestCostDay,
+          highestRequestDay
+        },
+        metadata: {
+          keyId,
+          keyName: req.apiKey.name,
+          createdAt: req.apiKey.createdAt,
+          queryTime: new Date().toISOString()
+        }
+      }
+    }
+
+    logger.info(`✅ Usage history for API key ${keyId} retrieved successfully`)
+    return res.json(response)
+  } catch (error) {
+    logger.error('❌ Failed to get API key usage history:', error)
+    return res
+      .status(500)
+      .json({ error: 'Failed to get API key usage history', message: error.message })
   }
 })
 
