@@ -10,6 +10,7 @@ const openaiAccountService = require('../services/openaiAccountService')
 const openaiResponsesAccountService = require('../services/openaiResponsesAccountService')
 const azureOpenaiAccountService = require('../services/azureOpenaiAccountService')
 const accountGroupService = require('../services/accountGroupService')
+const apiKeyOperationLogService = require('../services/apiKeyOperationLogService')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -783,6 +784,15 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
     })
 
     logger.success(`🔑 Admin created new API key: ${name}`)
+
+    // 记录操作日志
+    await apiKeyOperationLogService.recordCreate({
+      operator: req.admin?.username || 'unknown',
+      operatorType: 'admin',
+      keyData: newKey,
+      clientIp: req.ip || req.connection?.remoteAddress
+    })
+
     return res.json({ success: true, data: newKey })
   } catch (error) {
     logger.error('❌ Failed to create API key:', error)
@@ -1386,9 +1396,29 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       }
     }
 
+    // 获取更新前的数据（用于日志对比）
+    const beforeData = await apiKeyService.getApiKeyById(keyId)
+
     await apiKeyService.updateApiKey(keyId, updates)
 
+    // 获取更新后的数据
+    const afterData = await apiKeyService.getApiKeyById(keyId)
+
     logger.success(`📝 Admin updated API key: ${keyId}`)
+
+    // 记录操作日志（只记录实际变更的字段）
+    if (beforeData && afterData) {
+      await apiKeyOperationLogService.recordUpdate({
+        operator: req.admin?.username || 'unknown',
+        operatorType: 'admin',
+        keyId,
+        keyName: afterData.name || beforeData.name,
+        beforeData: apiKeyOperationLogService._extractKeyFields(beforeData),
+        afterData: apiKeyOperationLogService._extractKeyFields(afterData),
+        clientIp: req.ip || req.connection?.remoteAddress
+      })
+    }
+
     return res.json({ success: true, message: 'API key updated successfully' })
   } catch (error) {
     logger.error('❌ Failed to update API key:', error)
@@ -1584,9 +1614,23 @@ router.delete('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
   try {
     const { keyId } = req.params
 
+    // 获取key信息用于日志记录
+    const keyData = await apiKeyService.getApiKeyById(keyId)
+    const keyName = keyData?.name || 'Unknown'
+
     await apiKeyService.deleteApiKey(keyId, req.admin.username, 'admin')
 
     logger.success(`🗑️ Admin deleted API key: ${keyId}`)
+
+    // 记录操作日志
+    await apiKeyOperationLogService.recordDelete({
+      operator: req.admin?.username || 'unknown',
+      operatorType: 'admin',
+      keyId,
+      keyName,
+      clientIp: req.ip || req.connection?.remoteAddress
+    })
+
     return res.json({ success: true, message: 'API key deleted successfully' })
   } catch (error) {
     logger.error('❌ Failed to delete API key:', error)
@@ -1631,6 +1675,16 @@ router.post('/api-keys/:keyId/restore', authenticateAdmin, async (req, res) => {
 
     if (result.success) {
       logger.success(`✅ Admin ${adminUsername} restored API key: ${keyId}`)
+
+      // 记录操作日志
+      await apiKeyOperationLogService.recordRestore({
+        operator: req.admin?.username || adminUsername,
+        operatorType: 'admin',
+        keyId,
+        keyName: result.apiKey?.name || 'Unknown',
+        clientIp: req.ip || req.connection?.remoteAddress
+      })
+
       return res.json({
         success: true,
         message: 'API Key 已成功恢复',
@@ -9186,6 +9240,92 @@ router.post('/droid-accounts/:id/refresh-token', authenticateAdmin, async (req, 
   } catch (error) {
     logger.error(`Failed to refresh Droid account token ${req.params.id}:`, error)
     return res.status(500).json({ error: 'Failed to refresh token', message: error.message })
+  }
+})
+
+// ==================== API Key 操作日志路由 ====================
+
+// 📋 获取 API Key 操作日志列表
+router.get('/api-keys/operation-logs', authenticateAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 50, keyId, operator, action, startDate, endDate } = req.query
+
+    const result = await apiKeyOperationLogService.getLogs({
+      page: parseInt(page),
+      limit: parseInt(limit),
+      keyId,
+      operator,
+      action,
+      startDate,
+      endDate
+    })
+
+    logger.info(
+      `📋 Admin ${req.admin?.username} retrieved ${result.logs.length} operation logs (page ${page})`
+    )
+
+    return res.json({
+      success: true,
+      ...result
+    })
+  } catch (error) {
+    logger.error('❌ Failed to get operation logs:', error)
+    return res.status(500).json({
+      error: 'Failed to retrieve operation logs',
+      message: error.message
+    })
+  }
+})
+
+// 🔍 获取单条操作日志详情
+router.get('/api-keys/operation-logs/:logId', authenticateAdmin, async (req, res) => {
+  try {
+    const { logId } = req.params
+
+    const log = await apiKeyOperationLogService.getLog(logId)
+
+    if (!log) {
+      return res.status(404).json({
+        success: false,
+        error: 'Operation log not found'
+      })
+    }
+
+    return res.json({
+      success: true,
+      log
+    })
+  } catch (error) {
+    logger.error('❌ Failed to get operation log:', error)
+    return res.status(500).json({
+      error: 'Failed to retrieve operation log',
+      message: error.message
+    })
+  }
+})
+
+// 🧹 清理过期操作日志（管理员手动触发）
+router.post('/api-keys/operation-logs/cleanup', authenticateAdmin, async (req, res) => {
+  try {
+    const { retentionDays = 90 } = req.body
+
+    const cleanedCount = await apiKeyOperationLogService.cleanupExpiredLogs(retentionDays)
+
+    logger.success(
+      `🧹 Admin ${req.admin?.username} cleaned up ${cleanedCount} expired operation logs`
+    )
+
+    return res.json({
+      success: true,
+      message: `Cleaned up ${cleanedCount} expired operation logs`,
+      cleanedCount
+    })
+  } catch (error) {
+    logger.error('❌ Failed to cleanup operation logs:', error)
+    return res.status(500).json({
+      error: 'Failed to cleanup operation logs',
+      message: error.message
+    })
   }
 })
 

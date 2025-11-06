@@ -36,6 +36,18 @@
             <i class="fas fa-bell mr-2"></i>
             通知设置
           </button>
+          <button
+            :class="[
+              'border-b-2 pb-2 text-sm font-medium transition-colors',
+              activeSection === 'operation-logs'
+                ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+            ]"
+            @click="switchSection('operation-logs')"
+          >
+            <i class="fas fa-clipboard-list mr-2"></i>
+            操作日志
+          </button>
         </nav>
       </div>
 
@@ -630,6 +642,11 @@
           </div>
         </div>
       </div>
+
+      <!-- 操作日志部分 -->
+      <div v-show="activeSection === 'operation-logs'">
+        <ApiKeyOperationLogs />
+      </div>
     </div>
   </div>
 
@@ -1216,6 +1233,7 @@ import { storeToRefs } from 'pinia'
 import { showToast } from '@/utils/toast'
 import { useSettingsStore } from '@/stores/settings'
 import { apiClient } from '@/config/api'
+import ApiKeyOperationLogs from '@/components/settings/ApiKeyOperationLogs.vue'
 // import ContentSafetyManager from '@/components/settings/ContentSafetyManagerSimple.vue'
 
 // 定义组件名称，用于keep-alive排除
