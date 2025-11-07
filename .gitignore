@@ -154,6 +154,12 @@ desktop.ini
 config.js.backup.*
 *~
 
+# Data export/backup JSON files
+backup-*.json
+*-backup-*.json
+api-keys-*.json
+audit-report*.json
+
 # Archive files (unless specifically needed)
 *.7z
 *.dmg

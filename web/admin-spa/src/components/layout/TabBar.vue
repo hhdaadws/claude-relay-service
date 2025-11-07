@@ -57,6 +57,7 @@ const tabs = computed(() => {
     { key: 'dashboard', name: '仪表板', shortName: '仪表板', icon: 'fas fa-tachometer-alt' },
     { key: 'apiKeys', name: 'API Keys', shortName: 'API', icon: 'fas fa-key' },
     { key: 'accounts', name: '账户管理', shortName: '账户', icon: 'fas fa-user-circle' },
+    { key: 'proxies', name: '我的代理', shortName: '代理', icon: 'fas fa-server' },
     { key: 'contentSafety', name: '内容安全', shortName: '安全', icon: 'fas fa-shield-alt' }
   ]
 

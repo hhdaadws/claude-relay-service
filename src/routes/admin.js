@@ -9329,4 +9329,316 @@ router.post('/api-keys/operation-logs/cleanup', authenticateAdmin, async (req, r
   }
 })
 
+// ========================================
+// 🌐 代理管理 API
+// ========================================
+
+/**
+ * 生成代理的唯一标识（hash）
+ * 基于 type + host + port + username 生成
+ */
+function generateProxyHash(proxyConfig) {
+  const identifier = `${proxyConfig.type}://${proxyConfig.username || ''}@${proxyConfig.host}:${proxyConfig.port}`
+  return crypto.createHash('md5').update(identifier).digest('hex').substring(0, 16)
+}
+
+/**
+ * 解析代理配置字符串或对象
+ */
+function parseProxyConfig(proxyConfig) {
+  // 处理空值
+  if (!proxyConfig) {
+    return null
+  }
+
+  try {
+    // 如果已经是对象，直接使用
+    let proxyData = proxyConfig
+
+    // 如果是字符串，尝试解析
+    if (typeof proxyConfig === 'string') {
+      const trimmed = proxyConfig.trim()
+      if (trimmed === '') {
+        return null
+      }
+      proxyData = JSON.parse(trimmed)
+    }
+
+    // 验证必要字段 - type, host, port 必须存在
+    if (!proxyData.type || !proxyData.host || !proxyData.port) {
+      return null
+    }
+
+    // 如果有 enabled 字段且为 false,则不启用
+    // 如果没有 enabled 字段,则默认启用(向后兼容旧数据)
+    if (Object.prototype.hasOwnProperty.call(proxyData, 'enabled') && !proxyData.enabled) {
+      return null
+    }
+
+    return proxyData
+  } catch (error) {
+    logger.warn('⚠️ Invalid proxy config:', proxyConfig)
+    return null
+  }
+}
+
+/**
+ * 从所有平台获取账户列表
+ */
+async function getAllAccountsFromAllPlatforms() {
+  const accounts = []
+
+  try {
+    // Claude 官方账户
+    const claudeAccounts = await claudeAccountService.getAllAccounts()
+    accounts.push(
+      ...claudeAccounts.map((acc) => ({
+        ...acc,
+        platform: 'claude',
+        accountType: 'claude-official'
+      }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Claude accounts:', error.message)
+  }
+
+  try {
+    // Claude Console 账户
+    const consoleAccounts = await claudeConsoleAccountService.getAllAccounts()
+    accounts.push(
+      ...consoleAccounts.map((acc) => ({
+        ...acc,
+        platform: 'claude-console',
+        accountType: 'claude-console'
+      }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Claude Console accounts:', error.message)
+  }
+
+  try {
+    // Gemini 账户
+    const geminiAccounts = await geminiAccountService.getAllAccounts()
+    accounts.push(
+      ...geminiAccounts.map((acc) => ({ ...acc, platform: 'gemini', accountType: 'gemini' }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Gemini accounts:', error.message)
+  }
+
+  try {
+    // Bedrock 账户
+    const bedrockAccounts = await bedrockAccountService.getAllAccounts()
+    accounts.push(
+      ...bedrockAccounts.map((acc) => ({ ...acc, platform: 'bedrock', accountType: 'bedrock' }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Bedrock accounts:', error.message)
+  }
+
+  try {
+    // Azure OpenAI 账户
+    const azureAccounts = await azureOpenaiAccountService.getAllAccounts()
+    accounts.push(
+      ...azureAccounts.map((acc) => ({
+        ...acc,
+        platform: 'azure-openai',
+        accountType: 'azure-openai'
+      }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Azure OpenAI accounts:', error.message)
+  }
+
+  try {
+    // Droid 账户
+    const droidAccounts = await droidAccountService.getAllAccounts()
+    accounts.push(
+      ...droidAccounts.map((acc) => ({ ...acc, platform: 'droid', accountType: 'droid' }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch Droid accounts:', error.message)
+  }
+
+  try {
+    // CCR 账户
+    const ccrAccounts = await ccrAccountService.getAllAccounts()
+    accounts.push(...ccrAccounts.map((acc) => ({ ...acc, platform: 'ccr', accountType: 'ccr' })))
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch CCR accounts:', error.message)
+  }
+
+  try {
+    // OpenAI Responses 账户
+    const openaiResponsesAccounts = await openaiResponsesAccountService.getAllAccounts()
+    accounts.push(
+      ...openaiResponsesAccounts.map((acc) => ({
+        ...acc,
+        platform: 'openai-responses',
+        accountType: 'openai-responses'
+      }))
+    )
+  } catch (error) {
+    logger.warn('⚠️ Failed to fetch OpenAI Responses accounts:', error.message)
+  }
+
+  return accounts
+}
+
+// 📋 获取所有不重复的代理列表
+router.get('/proxies', authenticateAdmin, async (req, res) => {
+  try {
+    logger.info('🌐 Admin fetching all proxies list')
+
+    // 获取所有账户
+    const allAccounts = await getAllAccountsFromAllPlatforms()
+
+    // 提取代理配置并去重
+    const proxyMap = new Map()
+
+    for (const account of allAccounts) {
+      const proxyConfig = parseProxyConfig(account.proxy)
+
+      if (!proxyConfig) {
+        continue // 跳过无效或未配置代理的账户
+      }
+
+      // 生成代理唯一标识
+      const proxyHash = generateProxyHash(proxyConfig)
+
+      if (!proxyMap.has(proxyHash)) {
+        proxyMap.set(proxyHash, {
+          proxyHash,
+          type: proxyConfig.type,
+          host: proxyConfig.host,
+          port: proxyConfig.port,
+          username: proxyConfig.username || '', // 返回用户名和密码（API已有认证保护）
+          password: proxyConfig.password || '', // 返回密码，方便管理员复用已有代理
+          hasAuth: !!(proxyConfig.username && proxyConfig.password),
+          accountCount: 0,
+          accountTypes: new Set(),
+          accounts: []
+        })
+      }
+
+      // 更新统计信息
+      const proxyData = proxyMap.get(proxyHash)
+      proxyData.accountCount++
+      proxyData.accountTypes.add(account.platform)
+      proxyData.accounts.push({
+        id: account.id,
+        name: account.name,
+        platform: account.platform,
+        accountType: account.accountType,
+        status: account.status || 'active',
+        isActive: account.isActive !== false
+      })
+    }
+
+    // 转换为数组并格式化
+    const proxies = Array.from(proxyMap.values()).map((proxy) => ({
+      ...proxy,
+      accountTypes: Array.from(proxy.accountTypes)
+    }))
+
+    // 按账号数量排序（从多到少）
+    proxies.sort((a, b) => b.accountCount - a.accountCount)
+
+    logger.info(
+      `✅ Found ${proxies.length} unique proxies with ${allAccounts.length} total accounts`
+    )
+
+    return res.json({
+      success: true,
+      proxies,
+      totalAccounts: allAccounts.length
+    })
+  } catch (error) {
+    logger.error('❌ Failed to fetch proxies:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch proxies',
+      message: error.message
+    })
+  }
+})
+
+// 🔍 获取特定代理绑定的所有账号详情
+router.get('/proxies/:proxyHash/accounts', authenticateAdmin, async (req, res) => {
+  try {
+    const { proxyHash } = req.params
+
+    logger.info(`🔍 Admin fetching accounts for proxy hash: ${proxyHash}`)
+
+    // 获取所有账户
+    const allAccounts = await getAllAccountsFromAllPlatforms()
+
+    // 查找使用该代理的账户
+    const matchingAccounts = []
+    let proxyConfig = null
+
+    for (const account of allAccounts) {
+      const accountProxyConfig = parseProxyConfig(account.proxy)
+
+      if (!accountProxyConfig) {
+        continue
+      }
+
+      const accountProxyHash = generateProxyHash(accountProxyConfig)
+
+      if (accountProxyHash === proxyHash) {
+        // 保存代理配置（用于返回代理详情）
+        if (!proxyConfig) {
+          proxyConfig = {
+            type: accountProxyConfig.type,
+            host: accountProxyConfig.host,
+            port: accountProxyConfig.port,
+            hasAuth: !!(accountProxyConfig.username && accountProxyConfig.password)
+          }
+        }
+
+        // 添加账户详情
+        matchingAccounts.push({
+          id: account.id,
+          name: account.name,
+          description: account.description || '',
+          platform: account.platform,
+          accountType: account.accountType,
+          status: account.status || 'active',
+          isActive: account.isActive !== false,
+          createdAt: account.createdAt,
+          updatedAt: account.updatedAt
+        })
+      }
+    }
+
+    if (!proxyConfig) {
+      return res.status(404).json({
+        success: false,
+        error: 'Proxy not found',
+        message: `No accounts found using proxy hash: ${proxyHash}`
+      })
+    }
+
+    logger.info(`✅ Found ${matchingAccounts.length} accounts using proxy ${proxyHash}`)
+
+    return res.json({
+      success: true,
+      proxy: {
+        proxyHash,
+        ...proxyConfig
+      },
+      accounts: matchingAccounts,
+      accountCount: matchingAccounts.length
+    })
+  } catch (error) {
+    logger.error('❌ Failed to fetch proxy accounts:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch proxy accounts',
+      message: error.message
+    })
+  }
+})
+
 module.exports = router
