@@ -324,6 +324,86 @@
                 <canvas ref="chartCanvas" class="h-full w-full" />
               </div>
             </div>
+
+            <!-- Session 绑定列表（仅 Console 账户显示） -->
+            <div
+              v-if="sessionBindings && account?.platform === 'claude-console'"
+              class="rounded-2xl border border-gray-100 bg-white/80 p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900/70"
+            >
+              <div class="mb-4 flex items-center justify-between">
+                <h4
+                  class="flex items-center text-sm font-semibold text-gray-700 dark:text-gray-300"
+                >
+                  <i class="fas fa-link mr-2 text-purple-500" /> 粘性会话绑定
+                </h4>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ sessionBindings.currentSessionCount || 0 }} /
+                    {{ sessionBindings.maxConcurrentTasks || 0 }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="sessionBindings.bindings && sessionBindings.bindings.length > 0">
+                <div class="overflow-x-auto">
+                  <table
+                    class="w-full text-left text-xs text-gray-600 dark:text-gray-300 sm:text-sm"
+                  >
+                    <thead
+                      class="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                    >
+                      <tr>
+                        <th class="px-3 py-2 font-medium">Session ID</th>
+                        <th class="px-3 py-2 font-medium">来源 API Key</th>
+                        <th class="px-3 py-2 font-medium">创建时间</th>
+                        <th class="px-3 py-2 font-medium">过期时间</th>
+                        <th class="px-3 py-2 text-right font-medium">剩余</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                      <tr
+                        v-for="binding in sessionBindings.bindings"
+                        :key="binding.sessionHash"
+                        class="hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                      >
+                        <td class="px-3 py-2">
+                          <code
+                            class="rounded bg-gray-100 px-2 py-0.5 font-mono text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                            >{{ binding.sessionHashShort }}</code
+                          >
+                        </td>
+                        <td class="px-3 py-2">
+                          <span class="font-medium">{{ binding.apiKeyName || 'Unknown' }}</span>
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                          {{ formatShortDateTime(binding.createdAt) }}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                          {{ formatShortDateTime(binding.expireAt) }}
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                          <span
+                            :class="[
+                              'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                              binding.remainingSeconds > 600
+                                ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-300'
+                                : binding.remainingSeconds > 300
+                                  ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300'
+                                  : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300'
+                            ]"
+                          >
+                            {{ formatRemainingSeconds(binding.remainingSeconds) }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div v-else class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                <i class="fas fa-inbox mb-2 text-2xl text-gray-300 dark:text-gray-600" />
+                <p>当前没有绑定的会话</p>
+              </div>
+            </div>
           </template>
         </div>
       </div>
@@ -345,7 +425,8 @@ const props = defineProps({
   summary: { type: Object, default: () => ({}) },
   overview: { type: Object, default: () => ({}) },
   generatedAt: { type: String, default: '' },
-  loading: { type: Boolean, default: false }
+  loading: { type: Boolean, default: false },
+  sessionBindings: { type: Object, default: null } // Claude Console 账户的 Session 绑定数据
 })
 
 const emit = defineEmits(['close'])
@@ -425,6 +506,20 @@ const formatDateTime = (value) => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+const formatShortDateTime = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+const formatRemainingSeconds = (seconds) => {
+  if (seconds <= 0) return '已过期'
+  if (seconds < 60) return `${seconds}秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
+  return `${Math.floor(seconds / 3600)}小时${Math.floor((seconds % 3600) / 60)}分钟`
 }
 
 const findHistoryValue = (date, field) => {

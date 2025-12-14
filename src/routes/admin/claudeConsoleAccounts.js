@@ -53,6 +53,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
         try {
           const usageStats = await redis.getAccountUsageStats(account.id, 'openai')
           const groupInfos = await accountGroupService.getAccountGroups(account.id)
+          // 获取当前粘性会话绑定数
+          const currentSessionCount = await redis.getConsoleSessionBindingCount(account.id)
 
           const formattedAccount = formatAccountExpiry(account)
           return {
@@ -60,6 +62,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
             // 转换schedulable为布尔值
             schedulable: account.schedulable === 'true' || account.schedulable === true,
             groupInfos,
+            currentSessionCount, // 添加当前粘性会话数
             usage: {
               daily: usageStats.daily,
               total: usageStats.total,
@@ -73,12 +76,14 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
           )
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const currentSessionCount = await redis.getConsoleSessionBindingCount(account.id)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
               // 转换schedulable为布尔值
               schedulable: account.schedulable === 'true' || account.schedulable === true,
               groupInfos,
+              currentSessionCount, // 添加当前粘性会话数
               usage: {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
@@ -94,6 +99,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
             return {
               ...formattedAccount,
               groupInfos: [],
+              currentSessionCount: 0, // 添加默认值
               usage: {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
@@ -132,7 +138,9 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       dailyQuota,
       quotaResetTime,
       maxConcurrentTasks,
-      disableAutoProtection
+      disableAutoProtection,
+      disabledAutoProtectionErrors,
+      sessionTtlMinutes
     } = req.body
 
     if (!name || !apiUrl || !apiKey) {
@@ -149,6 +157,31 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       const concurrent = Number(maxConcurrentTasks)
       if (!Number.isInteger(concurrent) || concurrent < 0) {
         return res.status(400).json({ error: 'maxConcurrentTasks must be a non-negative integer' })
+      }
+    }
+
+    // 验证sessionTtlMinutes的有效性（5 或 60）
+    if (sessionTtlMinutes !== undefined && sessionTtlMinutes !== null) {
+      const ttl = Number(sessionTtlMinutes)
+      if (ttl !== 5 && ttl !== 60) {
+        return res
+          .status(400)
+          .json({ error: 'sessionTtlMinutes must be either 5 (5 minutes) or 60 (1 hour)' })
+      }
+    }
+
+    // 验证disabledAutoProtectionErrors的有效性
+    if (disabledAutoProtectionErrors !== undefined && disabledAutoProtectionErrors !== null) {
+      if (!Array.isArray(disabledAutoProtectionErrors)) {
+        return res.status(400).json({ error: 'disabledAutoProtectionErrors must be an array' })
+      }
+      const validErrorCodes = ['429', '401', '400', '529']
+      for (const code of disabledAutoProtectionErrors) {
+        if (!validErrorCodes.includes(code.toString())) {
+          return res
+            .status(400)
+            .json({ error: 'disabledAutoProtectionErrors must only contain: 429, 401, 400, 529' })
+        }
       }
     }
 
@@ -186,7 +219,14 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
         maxConcurrentTasks !== undefined && maxConcurrentTasks !== null
           ? Number(maxConcurrentTasks)
           : 0,
-      disableAutoProtection: normalizedDisableAutoProtection
+      disableAutoProtection: normalizedDisableAutoProtection,
+      disabledAutoProtectionErrors: Array.isArray(disabledAutoProtectionErrors)
+        ? disabledAutoProtectionErrors
+        : [],
+      sessionTtlMinutes:
+        sessionTtlMinutes !== undefined && sessionTtlMinutes !== null
+          ? Number(sessionTtlMinutes)
+          : 60 // 默认60分钟
     })
 
     // 如果是分组类型，将账户添加到分组（CCR 归属 Claude 平台分组）
@@ -235,6 +275,18 @@ router.put('/claude-console-accounts/:accountId', authenticateAdmin, async (req,
       mappedUpdates.maxConcurrentTasks = concurrent
     }
 
+    // 验证sessionTtlMinutes的有效性（5 或 60）
+    if (mappedUpdates.sessionTtlMinutes !== undefined && mappedUpdates.sessionTtlMinutes !== null) {
+      const ttl = Number(mappedUpdates.sessionTtlMinutes)
+      if (ttl !== 5 && ttl !== 60) {
+        return res
+          .status(400)
+          .json({ error: 'sessionTtlMinutes must be either 5 (5 minutes) or 60 (1 hour)' })
+      }
+      // 转换为数字类型
+      mappedUpdates.sessionTtlMinutes = ttl
+    }
+
     // 验证accountType的有效性
     if (
       mappedUpdates.accountType &&
@@ -261,6 +313,24 @@ router.put('/claude-console-accounts/:accountId', authenticateAdmin, async (req,
       mappedUpdates.disableAutoProtection =
         mappedUpdates.disableAutoProtection === true ||
         mappedUpdates.disableAutoProtection === 'true'
+    }
+
+    // 验证并处理 disabledAutoProtectionErrors
+    if (
+      mappedUpdates.disabledAutoProtectionErrors !== undefined &&
+      mappedUpdates.disabledAutoProtectionErrors !== null
+    ) {
+      if (!Array.isArray(mappedUpdates.disabledAutoProtectionErrors)) {
+        return res.status(400).json({ error: 'disabledAutoProtectionErrors must be an array' })
+      }
+      const validErrorCodes = ['429', '401', '400', '529']
+      for (const code of mappedUpdates.disabledAutoProtectionErrors) {
+        if (!validErrorCodes.includes(code.toString())) {
+          return res
+            .status(400)
+            .json({ error: 'disabledAutoProtectionErrors must only contain: 429, 401, 400, 529' })
+        }
+      }
     }
 
     // 处理分组的变更
@@ -429,6 +499,79 @@ router.get('/claude-console-accounts/:accountId/usage', authenticateAdmin, async
     return res.status(500).json({ error: 'Failed to get usage stats', message: error.message })
   }
 })
+
+// 获取Claude Console账户的Session绑定列表
+router.get(
+  '/claude-console-accounts/:accountId/session-bindings',
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      const { accountId } = req.params
+
+      // 验证账户是否存在
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (!account) {
+        return res.status(404).json({ error: 'Account not found' })
+      }
+
+      // 获取绑定的 session 列表
+      const bindings = await redis.getConsoleSessionBindings(accountId)
+
+      // 获取当前 session 绑定数
+      const currentCount = await redis.getConsoleSessionBindingCount(accountId)
+
+      return res.json({
+        success: true,
+        data: {
+          accountId,
+          accountName: account.name,
+          maxConcurrentTasks: account.maxConcurrentTasks || 0,
+          currentSessionCount: currentCount,
+          bindings
+        }
+      })
+    } catch (error) {
+      logger.error('❌ Failed to get Claude Console account session bindings:', error)
+      return res
+        .status(500)
+        .json({ error: 'Failed to get session bindings', message: error.message })
+    }
+  }
+)
+
+// 清理Claude Console账户的所有Session绑定
+router.delete(
+  '/claude-console-accounts/:accountId/session-bindings',
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      const { accountId } = req.params
+
+      // 验证账户是否存在
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (!account) {
+        return res.status(404).json({ error: 'Account not found' })
+      }
+
+      // 清理所有 session 绑定
+      const clearedCount = await redis.clearAllConsoleSessionBindings(accountId)
+
+      logger.success(
+        `🧹 Admin cleared all session bindings for Claude Console account: ${accountId}, cleared: ${clearedCount}`
+      )
+      return res.json({
+        success: true,
+        message: `Cleared ${clearedCount} session binding(s)`,
+        clearedCount
+      })
+    } catch (error) {
+      logger.error('❌ Failed to clear Claude Console account session bindings:', error)
+      return res
+        .status(500)
+        .json({ error: 'Failed to clear session bindings', message: error.message })
+    }
+  }
+)
 
 // 手动重置Claude Console账户的每日使用量
 router.post(

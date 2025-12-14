@@ -1187,7 +1187,53 @@
                   type="number"
                 />
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  限制该账户的并发请求数量，0 表示不限制
+                  限制该账户的粘性会话绑定数量，0 表示不限制
+                </p>
+              </div>
+
+              <!-- 粘性会话 TTL 选择器 (仅 Claude Console) -->
+              <div v-if="form.platform === 'claude-console'">
+                <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                  粘性会话过期时间
+                </label>
+                <div class="flex gap-3">
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 transition-all"
+                    :class="
+                      form.sessionTtlMinutes === 5
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-900/30 dark:text-blue-300'
+                        : 'border-gray-300 text-gray-600 hover:border-blue-300 dark:border-gray-600 dark:text-gray-400 dark:hover:border-blue-500'
+                    "
+                  >
+                    <input
+                      v-model.number="form.sessionTtlMinutes"
+                      class="h-4 w-4 text-blue-600"
+                      name="sessionTtlMinutes"
+                      type="radio"
+                      :value="5"
+                    />
+                    <span class="font-medium">5 分钟</span>
+                  </label>
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 transition-all"
+                    :class="
+                      form.sessionTtlMinutes === 60
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-900/30 dark:text-blue-300'
+                        : 'border-gray-300 text-gray-600 hover:border-blue-300 dark:border-gray-600 dark:text-gray-400 dark:hover:border-blue-500'
+                    "
+                  >
+                    <input
+                      v-model.number="form.sessionTtlMinutes"
+                      class="h-4 w-4 text-blue-600"
+                      name="sessionTtlMinutes"
+                      type="radio"
+                      :value="60"
+                    />
+                    <span class="font-medium">1 小时</span>
+                  </label>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  粘性会话绑定的过期时间，过期后会话将重新选择账户
                 </p>
               </div>
 
@@ -1455,21 +1501,74 @@
               <!-- 上游错误处理 -->
               <div v-if="form.platform === 'claude-console'">
                 <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                  >上游错误处理</label
+                  >上游错误自动防护</label
                 >
-                <label class="inline-flex cursor-pointer items-center">
-                  <input
-                    v-model="form.disableAutoProtection"
-                    class="mr-2 rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
-                    type="checkbox"
-                  />
-                  <span class="text-sm text-gray-700 dark:text-gray-300">
-                    上游错误不自动暂停调度
-                  </span>
-                </label>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  勾选后遇到 401/400/429/529 等上游错误仅记录日志并透传，不自动禁用或限流
-                </p>
+                <div class="space-y-2">
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    选择遇到以下错误时<strong>不自动禁用</strong>账户：
+                  </p>
+                  <div class="grid grid-cols-2 gap-3">
+                    <label
+                      class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        v-model="form.disabledAutoProtectionErrors"
+                        class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                        type="checkbox"
+                        value="429"
+                      />
+                      <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                        <i class="fas fa-exclamation-triangle mr-1 text-yellow-500" />
+                        429 - 速率限制
+                      </span>
+                    </label>
+                    <label
+                      class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        v-model="form.disabledAutoProtectionErrors"
+                        class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                        type="checkbox"
+                        value="401"
+                      />
+                      <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                        <i class="fas fa-lock mr-1 text-red-500" />
+                        401 - 未授权
+                      </span>
+                    </label>
+                    <label
+                      class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        v-model="form.disabledAutoProtectionErrors"
+                        class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                        type="checkbox"
+                        value="400"
+                      />
+                      <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                        <i class="fas fa-ban mr-1 text-red-500" />
+                        400 - 账户禁用
+                      </span>
+                    </label>
+                    <label
+                      class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        v-model="form.disabledAutoProtectionErrors"
+                        class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                        type="checkbox"
+                        value="529"
+                      />
+                      <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                        <i class="fas fa-server mr-1 text-orange-500" />
+                        529 - 服务过载
+                      </span>
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-400 dark:text-gray-500">
+                    未勾选的错误会触发自动禁用账户，勾选的错误仅记录日志
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -3126,21 +3225,74 @@
             <!-- 上游错误处理（编辑模式）-->
             <div v-if="form.platform === 'claude-console'">
               <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300">
-                上游错误处理
+                上游错误自动防护
               </label>
-              <label class="inline-flex cursor-pointer items-center">
-                <input
-                  v-model="form.disableAutoProtection"
-                  class="mr-2 rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
-                  type="checkbox"
-                />
-                <span class="text-sm text-gray-700 dark:text-gray-300">
-                  上游错误不自动暂停调度
-                </span>
-              </label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                勾选后遇到 401/400/429/529 等上游错误仅记录日志并透传，不自动禁用或限流
-              </p>
+              <div class="space-y-2">
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  选择遇到以下错误时<strong>不自动禁用</strong>账户：
+                </p>
+                <div class="grid grid-cols-2 gap-3">
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                  >
+                    <input
+                      v-model="form.disabledAutoProtectionErrors"
+                      class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                      value="429"
+                    />
+                    <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                      <i class="fas fa-exclamation-triangle mr-1 text-yellow-500" />
+                      429 - 速率限制
+                    </span>
+                  </label>
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                  >
+                    <input
+                      v-model="form.disabledAutoProtectionErrors"
+                      class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                      value="401"
+                    />
+                    <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                      <i class="fas fa-lock mr-1 text-red-500" />
+                      401 - 未授权
+                    </span>
+                  </label>
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                  >
+                    <input
+                      v-model="form.disabledAutoProtectionErrors"
+                      class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                      value="400"
+                    />
+                    <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                      <i class="fas fa-ban mr-1 text-red-500" />
+                      400 - 账户禁用
+                    </span>
+                  </label>
+                  <label
+                    class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 transition-all hover:border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                  >
+                    <input
+                      v-model="form.disabledAutoProtectionErrors"
+                      class="rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                      value="529"
+                    />
+                    <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">
+                      <i class="fas fa-server mr-1 text-orange-500" />
+                      529 - 服务过载
+                    </span>
+                  </label>
+                </div>
+                <p class="text-xs text-gray-400 dark:text-gray-500">
+                  未勾选的错误会触发自动禁用账户，勾选的错误仅记录日志
+                </p>
+              </div>
             </div>
           </div>
 
@@ -3235,6 +3387,54 @@
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 限制该账户的并发请求数量，0 表示不限制
+              </p>
+            </div>
+
+            <!-- 粘性会话 TTL 选择器 -->
+            <div>
+              <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                粘性会话过期时间
+              </label>
+              <div class="flex gap-3">
+                <label
+                  class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 transition-all"
+                  :class="
+                    form.sessionTtlMinutes === 5
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-500/10 dark:text-blue-300'
+                      : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500'
+                  "
+                >
+                  <input
+                    v-model.number="form.sessionTtlMinutes"
+                    class="hidden"
+                    name="sessionTtl"
+                    type="radio"
+                    :value="5"
+                  />
+                  <i class="fas fa-clock" />
+                  <span class="font-medium">5 分钟</span>
+                </label>
+                <label
+                  class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 transition-all"
+                  :class="
+                    form.sessionTtlMinutes === 60
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-500/10 dark:text-blue-300'
+                      : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:hover:border-gray-500'
+                  "
+                >
+                  <input
+                    v-model.number="form.sessionTtlMinutes"
+                    class="hidden"
+                    name="sessionTtl"
+                    type="radio"
+                    :value="60"
+                  />
+                  <i class="fas fa-hourglass-half" />
+                  <span class="font-medium">1 小时</span>
+                </label>
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                粘性会话的过期时间，影响同一会话持续使用该账户的时长
               </p>
             </div>
           </div>
@@ -4001,12 +4201,25 @@ const form = ref({
   userAgent: props.account?.userAgent || '',
   enableRateLimit: props.account ? props.account.rateLimitDuration > 0 : true,
   disableAutoProtection: props.account?.disableAutoProtection === true,
+  disabledAutoProtectionErrors: (() => {
+    const errors = props.account?.disabledAutoProtectionErrors
+    if (Array.isArray(errors)) {
+      return errors.map((e) => e.toString())
+    }
+    // 向后兼容：如果 disableAutoProtection=true，映射为所有错误码
+    if (props.account?.disableAutoProtection === true) {
+      return ['429', '401', '400', '529']
+    }
+    return []
+  })(),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
   quotaResetTime: props.account?.quotaResetTime || '00:00',
   // 并发控制字段
   maxConcurrentTasks: props.account?.maxConcurrentTasks || 0,
+  // 粘性会话 TTL（分钟）
+  sessionTtlMinutes: props.account?.sessionTtlMinutes || 60,
   // Bedrock 特定字段
   accessKeyId: props.account?.accessKeyId || '',
   secretAccessKey: props.account?.secretAccessKey || '',
@@ -5107,12 +5320,17 @@ const createAccount = async () => {
       // 上游错误处理（仅 Claude Console）
       if (form.value.platform === 'claude-console') {
         data.disableAutoProtection = !!form.value.disableAutoProtection
+        data.disabledAutoProtectionErrors = Array.isArray(form.value.disabledAutoProtectionErrors)
+          ? form.value.disabledAutoProtectionErrors
+          : []
       }
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       // 并发控制字段
       data.maxConcurrentTasks = form.value.maxConcurrentTasks || 0
+      // 粘性会话 TTL
+      data.sessionTtlMinutes = form.value.sessionTtlMinutes || 60
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
       data.baseApi = form.value.baseApi
@@ -5438,11 +5656,16 @@ const updateAccount = async () => {
       data.rateLimitDuration = form.value.enableRateLimit ? form.value.rateLimitDuration || 60 : 0
       // 上游错误处理
       data.disableAutoProtection = !!form.value.disableAutoProtection
+      data.disabledAutoProtectionErrors = Array.isArray(form.value.disabledAutoProtectionErrors)
+        ? form.value.disabledAutoProtectionErrors
+        : []
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       // 并发控制字段
       data.maxConcurrentTasks = form.value.maxConcurrentTasks || 0
+      // 粘性会话 TTL
+      data.sessionTtlMinutes = form.value.sessionTtlMinutes || 60
     }
 
     // OpenAI-Responses 特定更新

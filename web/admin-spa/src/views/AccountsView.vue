@@ -1022,6 +1022,41 @@
                         <i class="fas fa-infinity mr-1" />并发无限制
                       </div>
                     </div>
+
+                    <!-- 粘性会话统计 -->
+                    <div
+                      v-if="Number(account.maxConcurrentTasks || 0) > 0"
+                      class="space-y-1 border-t border-gray-200 pt-2 dark:border-gray-700"
+                    >
+                      <div class="flex items-center justify-between text-xs">
+                        <span class="text-gray-600 dark:text-gray-300">粘性会话</span>
+                        <span class="font-medium text-gray-700 dark:text-gray-200">
+                          {{ getSessionUsagePercent(account).toFixed(0) }}%
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <div class="h-2 w-24 rounded-full bg-gray-200 dark:bg-gray-700">
+                          <div
+                            :class="[
+                              'h-2 rounded-full transition-all duration-300',
+                              getConcurrencyBarClass(getSessionUsagePercent(account))
+                            ]"
+                            :style="{
+                              width: Math.min(100, getSessionUsagePercent(account)) + '%'
+                            }"
+                          />
+                        </div>
+                        <span
+                          :class="[
+                            'min-w-[48px] text-xs font-medium',
+                            getSessionLabelClass(account)
+                          ]"
+                        >
+                          {{ Number(account.currentSessionCount || 0) }} /
+                          {{ Number(account.maxConcurrentTasks || 0) }}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   <div v-else-if="account.platform === 'openai'" class="space-y-2">
                     <div v-if="account.codexUsage" class="space-y-2">
@@ -1859,6 +1894,7 @@
       :history="accountUsageHistory"
       :loading="accountUsageLoading"
       :overview="accountUsageOverview"
+      :session-bindings="accountSessionBindings"
       :show="showAccountUsageModal"
       :summary="accountUsageSummary"
       @close="closeAccountUsageModal"
@@ -2080,6 +2116,7 @@ const accountUsageHistory = ref([])
 const accountUsageSummary = ref({})
 const accountUsageOverview = ref({})
 const accountUsageGeneratedAt = ref('')
+const accountSessionBindings = ref(null) // Console 账户的 Session 绑定数据
 
 const supportedUsagePlatforms = [
   'claude',
@@ -2392,8 +2429,10 @@ const openAccountUsageModal = async (account) => {
   accountUsageSummary.value = {}
   accountUsageOverview.value = {}
   accountUsageGeneratedAt.value = ''
+  accountSessionBindings.value = null
 
   try {
+    // 获取使用历史数据
     const response = await apiClient.get(
       `/admin/accounts/${account.id}/usage-history?platform=${account.platform}&days=30`
     )
@@ -2407,6 +2446,21 @@ const openAccountUsageModal = async (account) => {
     } else {
       showToast(response.error || '加载账号使用详情失败', 'error')
     }
+
+    // 对于 Claude Console 账户，额外获取 Session 绑定数据
+    if (account.platform === 'claude-console') {
+      try {
+        const bindingsResponse = await apiClient.get(
+          `/admin/claude-console-accounts/${account.id}/session-bindings`
+        )
+        if (bindingsResponse.success) {
+          accountSessionBindings.value = bindingsResponse.data
+        }
+      } catch (bindingsError) {
+        console.warn('Failed to load session bindings:', bindingsError)
+        // 不影响主流程，继续显示其他数据
+      }
+    }
   } catch (error) {
     showToast('加载账号使用详情失败', 'error')
   } finally {
@@ -2418,6 +2472,7 @@ const closeAccountUsageModal = () => {
   showAccountUsageModal.value = false
   accountUsageLoading.value = false
   selectedAccountForUsage.value = null
+  accountSessionBindings.value = null
 }
 
 // 测试账户连通性相关函数
@@ -4263,6 +4318,29 @@ const getConcurrencyLabelClass = (account) => {
   }
   return 'text-gray-700 dark:text-gray-200'
 }
+
+// 粘性会话使用百分比（Claude Console）
+const getSessionUsagePercent = (account) => {
+  const max = Number(account?.maxConcurrentTasks || 0)
+  if (!max || max <= 0) return 0
+  const sessions = Number(account?.currentSessionCount || 0)
+  return Math.min(100, (sessions / max) * 100)
+}
+
+// 粘性会话标签颜色（Claude Console）
+const getSessionLabelClass = (account) => {
+  const max = Number(account?.maxConcurrentTasks || 0)
+  if (!max || max <= 0) return 'text-gray-500 dark:text-gray-400'
+  const sessions = Number(account?.currentSessionCount || 0)
+  if (sessions >= max) {
+    return 'text-red-600 dark:text-red-400'
+  }
+  if (sessions >= max * 0.8) {
+    return 'text-yellow-600 dark:text-yellow-400'
+  }
+  return 'text-gray-700 dark:text-gray-200'
+}
+
 
 // 剩余额度（Claude Console）
 const formatRemainingQuota = (account) => {

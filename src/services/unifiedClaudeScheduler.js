@@ -446,8 +446,27 @@ class UnifiedClaudeScheduler {
         await this._setSessionMapping(
           sessionHash,
           selectedAccount.accountId,
-          selectedAccount.accountType
+          selectedAccount.accountType,
+          { apiKeyId: apiKeyData.id, apiKeyName: apiKeyData.name }
         )
+
+        // 🆕 如果是 Console 账户，增加 session 绑定计数
+        if (selectedAccount.accountType === 'claude-console') {
+          // 使用账户配置的 TTL，默认60分钟
+          const ttlMinutes = selectedAccount.sessionTtlMinutes || 60
+          const ttlSeconds = Math.max(1, Math.floor(ttlMinutes * 60))
+
+          const sessionCount = await redis.incrConsoleSessionBinding(
+            selectedAccount.accountId,
+            sessionHash,
+            { apiKeyId: apiKeyData.id, apiKeyName: apiKeyData.name },
+            ttlSeconds
+          )
+          logger.info(
+            `🔗 Console account ${selectedAccount.name} now has ${sessionCount} bound sessions (new session from API key: ${apiKeyData.name}, TTL: ${ttlMinutes}min)`
+          )
+        }
+
         logger.info(
           `🎯 Created new sticky session mapping: ${selectedAccount.name} (${selectedAccount.accountId}, ${selectedAccount.accountType}) for session ${sessionHash}`
         )
@@ -772,26 +791,27 @@ class UnifiedClaudeScheduler {
       }
     }
 
-    // 🚀 批量查询所有账户的并发数（Promise.all 并行执行）
+    // 🚀 批量查询所有账户的 Session 绑定数（Promise.all 并行执行）
     if (accountsNeedingConcurrencyCheck.length > 0) {
       logger.debug(
-        `🚀 Batch checking concurrency for ${accountsNeedingConcurrencyCheck.length} accounts`
+        `🚀 Batch checking session bindings for ${accountsNeedingConcurrencyCheck.length} accounts`
       )
 
-      const concurrencyCheckPromises = accountsNeedingConcurrencyCheck.map((account) =>
-        redis.getConsoleAccountConcurrency(account.id).then((currentConcurrency) => ({
+      const sessionBindingCheckPromises = accountsNeedingConcurrencyCheck.map((account) =>
+        redis.getConsoleSessionBindingCount(account.id).then((currentSessionCount) => ({
           account,
-          currentConcurrency
+          currentSessionCount
         }))
       )
 
-      const concurrencyResults = await Promise.all(concurrencyCheckPromises)
+      const sessionBindingResults = await Promise.all(sessionBindingCheckPromises)
 
       // 处理批量查询结果
-      for (const { account, currentConcurrency } of concurrencyResults) {
-        const isConcurrencyFull = currentConcurrency >= account.maxConcurrentTasks
+      for (const { account, currentSessionCount } of sessionBindingResults) {
+        // 改为检查 session 绑定数量
+        const isSessionLimitReached = currentSessionCount >= account.maxConcurrentTasks
 
-        if (!isConcurrencyFull) {
+        if (!isSessionLimitReached) {
           availableAccounts.push({
             ...account,
             accountId: account.id,
@@ -800,13 +820,13 @@ class UnifiedClaudeScheduler {
             lastUsedAt: account.lastUsedAt || '0'
           })
           logger.info(
-            `✅ Added Claude Console account to available pool: ${account.name} (priority: ${account.priority}, concurrency: ${currentConcurrency}/${account.maxConcurrentTasks})`
+            `✅ Added Claude Console account to available pool: ${account.name} (priority: ${account.priority}, sessions: ${currentSessionCount}/${account.maxConcurrentTasks})`
           )
         } else {
-          // 🔢 因并发满额被排除，计数器加1
+          // 🔢 因 session 绑定满额被排除，计数器加1
           consoleAccountsExcludedByConcurrency++
           logger.warn(
-            `⚠️ Claude Console account ${account.name} reached concurrency limit: ${currentConcurrency}/${account.maxConcurrentTasks}`
+            `⚠️ Claude Console account ${account.name} reached session limit: ${currentSessionCount}/${account.maxConcurrentTasks}`
           )
         }
       }
@@ -1178,9 +1198,15 @@ class UnifiedClaudeScheduler {
   }
 
   // 💾 设置会话映射
-  async _setSessionMapping(sessionHash, accountId, accountType) {
+  async _setSessionMapping(sessionHash, accountId, accountType, apiKeyInfo = {}) {
     const client = redis.getClientSafe()
-    const mappingData = JSON.stringify({ accountId, accountType })
+    const mappingData = JSON.stringify({
+      accountId,
+      accountType,
+      apiKeyId: apiKeyInfo.apiKeyId || '',
+      apiKeyName: apiKeyInfo.apiKeyName || '',
+      createdAt: new Date().toISOString()
+    })
     // 依据配置设置TTL（小时）
     const appConfig = require('../../config/config')
     const ttlHours = appConfig.session?.stickyTtlHours || 1
@@ -1206,6 +1232,17 @@ class UnifiedClaudeScheduler {
     }
 
     try {
+      // 🆕 先获取映射，判断是否是 Console 账户
+      const mapping = await this._getSessionMapping(sessionHash)
+
+      if (mapping && mapping.accountType === 'claude-console') {
+        // 同时清理 session 绑定计数
+        await redis.decrConsoleSessionBinding(mapping.accountId, sessionHash)
+        logger.info(
+          `🔓 Removed console session binding for account ${mapping.accountId}, session: ${sessionHash.substring(0, 8)}...`
+        )
+      }
+
       await this._deleteSessionMapping(sessionHash)
       logger.info(
         `🧹 Cleared sticky session mapping for session: ${sessionHash.substring(0, 8)}...`
@@ -1232,7 +1269,6 @@ class UnifiedClaudeScheduler {
       }
 
       const appConfig = require('../../config/config')
-      const ttlHours = appConfig.session?.stickyTtlHours || 1
       const renewalThresholdMinutes = appConfig.session?.renewalThresholdMinutes || 0
 
       // 阈值为0则不续期
@@ -1240,14 +1276,46 @@ class UnifiedClaudeScheduler {
         return true
       }
 
-      const fullTTL = Math.max(1, Math.floor(ttlHours * 60 * 60))
+      // 获取 session 映射信息
+      const mapping = await this._getSessionMapping(sessionHash)
+      if (!mapping) {
+        return false
+      }
+
+      // 对于 Console 账户，使用账户配置的 TTL；其他账户使用全局配置
+      let ttlSeconds
+      if (mapping.accountType === 'claude-console') {
+        // 获取账户信息获取 TTL 配置
+        const account = await claudeConsoleAccountService.getAccount(mapping.accountId)
+        if (!account) {
+          logger.warn(
+            `⚠️ Console account ${mapping.accountId} not found during session TTL renewal`
+          )
+          return false
+        }
+        const ttlMinutes = account.sessionTtlMinutes || 60
+        ttlSeconds = Math.max(1, Math.floor(ttlMinutes * 60))
+      } else {
+        // 其他账户使用全局配置
+        const ttlHours = appConfig.session?.stickyTtlHours || 1
+        ttlSeconds = Math.max(1, Math.floor(ttlHours * 60 * 60))
+      }
+
       const threshold = Math.max(0, Math.floor(renewalThresholdMinutes * 60))
 
       if (remainingTTL < threshold) {
-        await client.expire(key, fullTTL)
+        await client.expire(key, ttlSeconds)
         logger.debug(
-          `🔄 Renewed unified session TTL: ${sessionHash} (was ${Math.round(remainingTTL / 60)}m, renewed to ${ttlHours}h)`
+          `🔄 Renewed unified session TTL: ${sessionHash} (was ${Math.round(remainingTTL / 60)}m, renewed to ${Math.round(ttlSeconds / 60)}m)`
         )
+
+        // 🆕 同时续期 Console 账户的 session 绑定
+        if (mapping.accountType === 'claude-console') {
+          await redis.renewConsoleSessionBindingTTL(mapping.accountId, sessionHash, ttlSeconds)
+          logger.debug(
+            `🔄 Renewed console session binding TTL for account ${mapping.accountId}, session: ${sessionHash.substring(0, 8)}...`
+          )
+        }
       } else {
         logger.debug(
           `✅ Unified session TTL sufficient: ${sessionHash} (remaining ${Math.round(remainingTTL / 60)}m)`

@@ -1,7 +1,6 @@
 const axios = require('axios')
 const { v4: uuidv4 } = require('uuid')
 const claudeConsoleAccountService = require('./claudeConsoleAccountService')
-const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 const {
@@ -17,6 +16,13 @@ class ClaudeConsoleRelayService {
     this.defaultUserAgent = 'claude-cli/2.0.52 (external, cli)'
   }
 
+  // 🆕 检查某个错误码是否应该触发自动防护
+  _shouldAutoProtect(account, errorCode) {
+    // 如果该错误码在禁用列表中，则不自动防护
+    const disabledErrors = account.disabledAutoProtectionErrors || []
+    return !disabledErrors.includes(errorCode.toString())
+  }
+
   // 🚀 转发请求到Claude Console API
   async relayRequest(
     requestBody,
@@ -29,8 +35,7 @@ class ClaudeConsoleRelayService {
   ) {
     let abortController = null
     let account = null
-    const requestId = uuidv4() // 用于并发追踪
-    let concurrencyAcquired = false
+    const requestId = uuidv4() // 用于请求追踪
     let queueLockAcquired = false
     let queueRequestId = null
 
@@ -99,40 +104,12 @@ class ClaudeConsoleRelayService {
         throw new Error('Claude Console Claude account not found')
       }
 
-      const autoProtectionDisabled = account.disableAutoProtection === true
-
       logger.info(
         `📤 Processing Claude Console API request for key: ${apiKeyData.name || apiKeyData.id}, account: ${account.name} (${accountId}), request: ${requestId}`
       )
 
-      // 🔒 并发控制：原子性抢占槽位
-      if (account.maxConcurrentTasks > 0) {
-        // 先抢占，再检查 - 避免竞态条件
-        const newConcurrency = Number(
-          await redis.incrConsoleAccountConcurrency(accountId, requestId, 600)
-        )
-        concurrencyAcquired = true
+      // 注意：并发限制已改为基于 session 绑定数，在 unifiedClaudeScheduler 中检查
 
-        // 检查是否超过限制
-        if (newConcurrency > account.maxConcurrentTasks) {
-          // 超限，立即回滚
-          await redis.decrConsoleAccountConcurrency(accountId, requestId)
-          concurrencyAcquired = false
-
-          logger.warn(
-            `⚠️ Console account ${account.name} (${accountId}) concurrency limit exceeded: ${newConcurrency}/${account.maxConcurrentTasks} (request: ${requestId}, rolled back)`
-          )
-
-          const error = new Error('Console account concurrency limit reached')
-          error.code = 'CONSOLE_ACCOUNT_CONCURRENCY_FULL'
-          error.accountId = accountId
-          throw error
-        }
-
-        logger.debug(
-          `🔓 Acquired concurrency slot for account ${account.name} (${accountId}), current: ${newConcurrency}/${account.maxConcurrentTasks}, request: ${requestId}`
-        )
-      }
       logger.debug(`🌐 Account API URL: ${account.apiUrl}`)
       logger.debug(`🔍 Account supportedModels: ${JSON.stringify(account.supportedModels)}`)
       logger.debug(`🔑 Account has apiKey: ${!!account.apiKey}`)
@@ -330,38 +307,38 @@ class ClaudeConsoleRelayService {
       // 检查错误状态并相应处理
       if (response.status === 401) {
         logger.warn(
-          `🚫 Unauthorized error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+          `🚫 Unauthorized error detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '401') ? ' (auto-protection disabled for 401, skipping status change)' : ''}`
         )
-        if (!autoProtectionDisabled) {
+        if (this._shouldAutoProtect(account, '401')) {
           await claudeConsoleAccountService.markAccountUnauthorized(accountId)
         }
       } else if (accountDisabledError) {
         logger.error(
-          `🚫 Account disabled error (400) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+          `🚫 Account disabled error (400) detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '400') ? ' (auto-protection disabled for 400, skipping status change)' : ''}`
         )
         // 传入完整的错误详情到 webhook
         const errorDetails =
           typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
-        if (!autoProtectionDisabled) {
+        if (this._shouldAutoProtect(account, '400')) {
           await claudeConsoleAccountService.markConsoleAccountBlocked(accountId, errorDetails)
         }
       } else if (response.status === 429) {
         logger.warn(
-          `🚫 Rate limit detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+          `🚫 Rate limit detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '429') ? ' (auto-protection disabled for 429, skipping status change)' : ''}`
         )
         // 收到429先检查是否因为超过了手动配置的每日额度
         await claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
           logger.error('❌ Failed to check quota after 429 error:', err)
         })
 
-        if (!autoProtectionDisabled) {
+        if (this._shouldAutoProtect(account, '429')) {
           await claudeConsoleAccountService.markAccountRateLimited(accountId)
         }
       } else if (response.status === 529) {
         logger.warn(
-          `🚫 Overload error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+          `🚫 Overload error detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '529') ? ' (auto-protection disabled for 529, skipping status change)' : ''}`
         )
-        if (!autoProtectionDisabled) {
+        if (this._shouldAutoProtect(account, '529')) {
           await claudeConsoleAccountService.markAccountOverloaded(accountId)
         }
       } else if (response.status === 200 || response.status === 201) {
@@ -431,21 +408,6 @@ class ClaudeConsoleRelayService {
 
       throw error
     } finally {
-      // 🔓 并发控制：释放并发槽位
-      if (concurrencyAcquired) {
-        try {
-          await redis.decrConsoleAccountConcurrency(accountId, requestId)
-          logger.debug(
-            `🔓 Released concurrency slot for account ${account?.name || accountId}, request: ${requestId}`
-          )
-        } catch (releaseError) {
-          logger.error(
-            `❌ Failed to release concurrency slot for account ${accountId}, request: ${requestId}:`,
-            releaseError.message
-          )
-        }
-      }
-
       // 📬 释放用户消息队列锁（兜底，正常情况下已在请求发送后提前释放）
       if (queueLockAcquired && queueRequestId && accountId) {
         try {
@@ -475,9 +437,7 @@ class ClaudeConsoleRelayService {
     options = {}
   ) {
     let account = null
-    const requestId = uuidv4() // 用于并发追踪
-    let concurrencyAcquired = false
-    let leaseRefreshInterval = null // 租约刷新定时器
+    const requestId = uuidv4() // 用于请求追踪
     let queueLockAcquired = false
     let queueRequestId = null
 
@@ -553,52 +513,7 @@ class ClaudeConsoleRelayService {
         `📡 Processing streaming Claude Console API request for key: ${apiKeyData.name || apiKeyData.id}, account: ${account.name} (${accountId}), request: ${requestId}`
       )
 
-      // 🔒 并发控制：原子性抢占槽位
-      if (account.maxConcurrentTasks > 0) {
-        // 先抢占，再检查 - 避免竞态条件
-        const newConcurrency = Number(
-          await redis.incrConsoleAccountConcurrency(accountId, requestId, 600)
-        )
-        concurrencyAcquired = true
-
-        // 检查是否超过限制
-        if (newConcurrency > account.maxConcurrentTasks) {
-          // 超限，立即回滚
-          await redis.decrConsoleAccountConcurrency(accountId, requestId)
-          concurrencyAcquired = false
-
-          logger.warn(
-            `⚠️ Console account ${account.name} (${accountId}) concurrency limit exceeded: ${newConcurrency}/${account.maxConcurrentTasks} (stream request: ${requestId}, rolled back)`
-          )
-
-          const error = new Error('Console account concurrency limit reached')
-          error.code = 'CONSOLE_ACCOUNT_CONCURRENCY_FULL'
-          error.accountId = accountId
-          throw error
-        }
-
-        logger.debug(
-          `🔓 Acquired concurrency slot for stream account ${account.name} (${accountId}), current: ${newConcurrency}/${account.maxConcurrentTasks}, request: ${requestId}`
-        )
-
-        // 🔄 启动租约刷新定时器（每5分钟刷新一次，防止长连接租约过期）
-        leaseRefreshInterval = setInterval(
-          async () => {
-            try {
-              await redis.refreshConsoleAccountConcurrencyLease(accountId, requestId, 600)
-              logger.debug(
-                `🔄 Refreshed concurrency lease for stream account ${account.name} (${accountId}), request: ${requestId}`
-              )
-            } catch (refreshError) {
-              logger.error(
-                `❌ Failed to refresh concurrency lease for account ${accountId}, request: ${requestId}:`,
-                refreshError.message
-              )
-            }
-          },
-          5 * 60 * 1000
-        ) // 5分钟刷新一次
-      }
+      // 注意：并发限制已改为基于 session 绑定数，在 unifiedClaudeScheduler 中检查
 
       logger.debug(`🌐 Account API URL: ${account.apiUrl}`)
 
@@ -676,29 +591,6 @@ class ClaudeConsoleRelayService {
       }
       throw error
     } finally {
-      // 🛑 清理租约刷新定时器
-      if (leaseRefreshInterval) {
-        clearInterval(leaseRefreshInterval)
-        logger.debug(
-          `🛑 Cleared lease refresh interval for stream account ${account?.name || accountId}, request: ${requestId}`
-        )
-      }
-
-      // 🔓 并发控制:释放并发槽位
-      if (concurrencyAcquired) {
-        try {
-          await redis.decrConsoleAccountConcurrency(accountId, requestId)
-          logger.debug(
-            `🔓 Released concurrency slot for stream account ${account?.name || accountId}, request: ${requestId}`
-          )
-        } catch (releaseError) {
-          logger.error(
-            `❌ Failed to release concurrency slot for stream account ${accountId}, request: ${requestId}:`,
-            releaseError.message
-          )
-        }
-      }
-
       // 📬 释放用户消息队列锁（兜底，正常情况下已在收到响应头后提前释放）
       if (queueLockAcquired && queueRequestId && accountId) {
         try {
@@ -813,7 +705,6 @@ class ClaudeConsoleRelayService {
             })
 
             response.data.on('end', async () => {
-              const autoProtectionDisabled = account.disableAutoProtection === true
               // 记录原始错误消息到日志（方便调试，包含供应商信息）
               logger.error(
                 `📝 [Stream] Upstream error response from ${account?.name || accountId}: ${errorDataForCheck.substring(0, 500)}`
@@ -827,17 +718,17 @@ class ClaudeConsoleRelayService {
 
               if (response.status === 401) {
                 logger.warn(
-                  `🚫 [Stream] Unauthorized error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  `🚫 [Stream] Unauthorized error detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '401') ? ' (auto-protection disabled for 401, skipping status change)' : ''}`
                 )
-                if (!autoProtectionDisabled) {
+                if (this._shouldAutoProtect(account, '401')) {
                   await claudeConsoleAccountService.markAccountUnauthorized(accountId)
                 }
               } else if (accountDisabledError) {
                 logger.error(
-                  `🚫 [Stream] Account disabled error (400) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  `🚫 [Stream] Account disabled error (400) detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '400') ? ' (auto-protection disabled for 400, skipping status change)' : ''}`
                 )
                 // 传入完整的错误详情到 webhook
-                if (!autoProtectionDisabled) {
+                if (this._shouldAutoProtect(account, '400')) {
                   await claudeConsoleAccountService.markConsoleAccountBlocked(
                     accountId,
                     errorDataForCheck
@@ -845,20 +736,20 @@ class ClaudeConsoleRelayService {
                 }
               } else if (response.status === 429) {
                 logger.warn(
-                  `🚫 [Stream] Rate limit detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  `🚫 [Stream] Rate limit detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '429') ? ' (auto-protection disabled for 429, skipping status change)' : ''}`
                 )
                 // 检查是否因为超过每日额度
                 claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
                   logger.error('❌ Failed to check quota after 429 error:', err)
                 })
-                if (!autoProtectionDisabled) {
+                if (this._shouldAutoProtect(account, '429')) {
                   await claudeConsoleAccountService.markAccountRateLimited(accountId)
                 }
               } else if (response.status === 529) {
                 logger.warn(
-                  `🚫 [Stream] Overload error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  `🚫 [Stream] Overload error detected for Claude Console account ${accountId}${!this._shouldAutoProtect(account, '529') ? ' (auto-protection disabled for 529, skipping status change)' : ''}`
                 )
-                if (!autoProtectionDisabled) {
+                if (this._shouldAutoProtect(account, '529')) {
                   await claudeConsoleAccountService.markAccountOverloaded(accountId)
                 }
               }
@@ -1245,15 +1136,15 @@ class ClaudeConsoleRelayService {
 
           // 检查错误状态
           if (error.response) {
-            if (error.response.status === 401) {
+            if (error.response.status === 401 && this._shouldAutoProtect(account, '401')) {
               claudeConsoleAccountService.markAccountUnauthorized(accountId)
-            } else if (error.response.status === 429) {
+            } else if (error.response.status === 429 && this._shouldAutoProtect(account, '429')) {
               claudeConsoleAccountService.markAccountRateLimited(accountId)
               // 检查是否因为超过每日额度
               claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
                 logger.error('❌ Failed to check quota after 429 error:', err)
               })
-            } else if (error.response.status === 529) {
+            } else if (error.response.status === 529 && this._shouldAutoProtect(account, '529')) {
               claudeConsoleAccountService.markAccountOverloaded(accountId)
             }
           }

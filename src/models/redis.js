@@ -128,6 +128,29 @@ class RedisClient {
     return this.client
   }
 
+  /**
+   * 🔒 安全设置 Redis Hash 数据
+   * 兼容旧版本 Redis（< 4.0），过滤掉 null/undefined 值
+   * @param {string} key - Redis key
+   * @param {Object} data - 要存储的对象数据
+   */
+  async safeHset(key, data) {
+    const client = this.getClientSafe()
+
+    // 过滤掉 null/undefined 值，并将所有值转换为字符串
+    const filteredEntries = Object.entries(data).filter(([, v]) => v !== null && v !== undefined)
+
+    if (filteredEntries.length === 0) {
+      logger.warn(`⚠️ safeHset: No valid data to set for key ${key}`)
+      return
+    }
+
+    // 使用逐个字段设置的方式，兼容旧版本 Redis
+    for (const [field, value] of filteredEntries) {
+      await client.hset(key, field, String(value))
+    }
+  }
+
   // 🔑 API Key 相关操作
   async setApiKey(keyId, keyData, hashedKey = null) {
     const key = `apikey:${keyId}`
@@ -139,8 +162,9 @@ class RedisClient {
       await client.hset('apikey:hash_map', hashedKey, keyId)
     }
 
-    await client.hset(key, keyData)
-    await client.expire(key, 86400 * 365) // 1年过期
+    // 使用 safeHset 过滤 null/undefined 值，兼容旧版 Redis
+    await this.safeHset(key, keyData)
+    await this.client.expire(key, 86400 * 365) // 1年过期
   }
 
   async getApiKey(keyId) {
@@ -1327,7 +1351,8 @@ class RedisClient {
         const keyData = await client.hgetall(`apikey:${keyId}`)
         if (keyData && Object.keys(keyData).length > 0) {
           keyData.lastUsedAt = ''
-          await client.hset(`apikey:${keyId}`, keyData)
+          // 使用 safeHset 过滤 null/undefined 值，兼容旧版 Redis
+          await this.safeHset(`apikey:${keyId}`, keyData)
           stats.resetApiKeys++
         }
       }
@@ -1429,7 +1454,13 @@ class RedisClient {
   // 🔐 会话管理（用于管理员登录等）
   async setSession(sessionId, sessionData, ttl = 86400) {
     const key = `session:${sessionId}`
-    await this.client.hset(key, sessionData)
+    // 过滤掉 null/undefined 值，避免某些 Redis 版本的 HSET 兼容性问题
+    // 使用逐个字段设置的方式，兼容旧版本 Redis（< 4.0）
+    for (const [k, v] of Object.entries(sessionData)) {
+      if (v !== null && v !== undefined && v !== '') {
+        await this.client.hset(key, k, String(v))
+      }
+    }
     await this.client.expire(key, ttl)
   }
 
@@ -3154,6 +3185,324 @@ redisClient.scanConcurrencyQueueStatsKeys = async function () {
   } catch (error) {
     logger.error('Failed to scan concurrency queue stats keys:', error)
     return []
+  }
+}
+
+// ========== Console 账户 Session 绑定管理 ==========
+
+/**
+ * 增加 Console 账户的 Session 绑定
+ * @param {string} accountId - 账户ID
+ * @param {string} sessionHash - 会话哈希
+ * @param {Object} bindingInfo - 绑定信息 { apiKeyId, apiKeyName }
+ * @param {number} ttlSeconds - 绑定的 TTL（秒）
+ * @returns {Promise<number>} - 当前绑定的 session 数量
+ */
+redisClient.incrConsoleSessionBinding = async function (
+  accountId,
+  sessionHash,
+  bindingInfo = {},
+  ttlSeconds = 3600
+) {
+  if (!sessionHash) {
+    throw new Error('Session hash is required for session binding tracking')
+  }
+
+  try {
+    const bindingsKey = `console_session_bindings:${accountId}`
+    const detailKey = `console_session_detail:${accountId}:${sessionHash}`
+    const now = Date.now()
+    const expireAt = now + ttlSeconds * 1000
+    // Key 的 TTL 设为最大绑定 TTL + 缓冲时间
+    const keyTtl = Math.max(ttlSeconds + 300, 3900)
+
+    // 存储绑定详情（包含 API Key 信息）
+    const detailData = JSON.stringify({
+      sessionHash,
+      apiKeyId: bindingInfo.apiKeyId || '',
+      apiKeyName: bindingInfo.apiKeyName || '',
+      createdAt: new Date().toISOString(),
+      expireAt: new Date(expireAt).toISOString()
+    })
+
+    const luaScript = `
+      local bindingsKey = KEYS[1]
+      local detailKey = KEYS[2]
+      local member = ARGV[1]
+      local expireAt = tonumber(ARGV[2])
+      local now = tonumber(ARGV[3])
+      local ttl = tonumber(ARGV[4])
+      local detailData = ARGV[5]
+
+      -- 清理过期的 session 绑定
+      redis.call('ZREMRANGEBYSCORE', bindingsKey, '-inf', now)
+
+      -- 添加或更新 session 绑定
+      redis.call('ZADD', bindingsKey, expireAt, member)
+
+      -- 存储绑定详情
+      redis.call('SETEX', detailKey, ttl, detailData)
+
+      -- 设置 bindings key 的过期时间
+      if ttl > 0 then
+        redis.call('EXPIRE', bindingsKey, ttl)
+      end
+
+      -- 返回当前绑定数量
+      return redis.call('ZCARD', bindingsKey)
+    `
+
+    const count = await this.client.eval(
+      luaScript,
+      2,
+      bindingsKey,
+      detailKey,
+      sessionHash,
+      expireAt,
+      now,
+      keyTtl,
+      detailData
+    )
+    logger.database(
+      `🔗 Added session binding for console account ${accountId}: ${count} sessions (session: ${sessionHash.substring(0, 8)}..., apiKey: ${bindingInfo.apiKeyName || 'unknown'})`
+    )
+    return count
+  } catch (error) {
+    logger.error('❌ Failed to increment console session binding:', error)
+    throw error
+  }
+}
+
+/**
+ * 移除 Console 账户的 Session 绑定
+ * @param {string} accountId - 账户ID
+ * @param {string} sessionHash - 会话哈希
+ * @returns {Promise<number>} - 剩余绑定的 session 数量
+ */
+redisClient.decrConsoleSessionBinding = async function (accountId, sessionHash) {
+  try {
+    const bindingsKey = `console_session_bindings:${accountId}`
+    const detailKey = `console_session_detail:${accountId}:${sessionHash}`
+    const now = Date.now()
+
+    const luaScript = `
+      local bindingsKey = KEYS[1]
+      local detailKey = KEYS[2]
+      local member = ARGV[1]
+      local now = tonumber(ARGV[2])
+
+      -- 移除指定的 session
+      if member and member ~= '' then
+        redis.call('ZREM', bindingsKey, member)
+        redis.call('DEL', detailKey)
+      end
+
+      -- 清理过期的 session 绑定
+      redis.call('ZREMRANGEBYSCORE', bindingsKey, '-inf', now)
+
+      local count = redis.call('ZCARD', bindingsKey)
+      if count <= 0 then
+        redis.call('DEL', bindingsKey)
+        return 0
+      end
+
+      return count
+    `
+
+    const count = await this.client.eval(
+      luaScript,
+      2,
+      bindingsKey,
+      detailKey,
+      sessionHash || '',
+      now
+    )
+    logger.database(
+      `🔓 Removed session binding for console account ${accountId}: ${count} sessions remaining`
+    )
+    return count
+  } catch (error) {
+    logger.error('❌ Failed to decrement console session binding:', error)
+    throw error
+  }
+}
+
+/**
+ * 获取 Console 账户当前绑定的 Session 数量
+ * @param {string} accountId - 账户ID
+ * @returns {Promise<number>} - 当前绑定的 session 数量
+ */
+redisClient.getConsoleSessionBindingCount = async function (accountId) {
+  try {
+    const key = `console_session_bindings:${accountId}`
+    const now = Date.now()
+
+    const luaScript = `
+      local key = KEYS[1]
+      local now = tonumber(ARGV[1])
+
+      -- 清理过期的 session 绑定
+      redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+      return redis.call('ZCARD', key)
+    `
+
+    return await this.client.eval(luaScript, 1, key, now)
+  } catch (error) {
+    logger.error('❌ Failed to get console session binding count:', error)
+    return 0
+  }
+}
+
+/**
+ * 检查 Session 是否已绑定到指定 Console 账户
+ * @param {string} accountId - 账户ID
+ * @param {string} sessionHash - 会话哈希
+ * @returns {Promise<boolean>} - 是否已绑定
+ */
+redisClient.isSessionBoundToConsoleAccount = async function (accountId, sessionHash) {
+  try {
+    const key = `console_session_bindings:${accountId}`
+    const now = Date.now()
+
+    // 获取该 session 的过期时间
+    const score = await this.client.zscore(key, sessionHash)
+
+    // 存在且未过期
+    return score !== null && parseInt(score) > now
+  } catch (error) {
+    logger.error('❌ Failed to check session binding:', error)
+    return false
+  }
+}
+
+/**
+ * 续期 Session 绑定的 TTL
+ * @param {string} accountId - 账户ID
+ * @param {string} sessionHash - 会话哈希
+ * @param {number} ttlSeconds - 新的 TTL（秒）
+ * @returns {Promise<boolean>} - 是否续期成功
+ */
+redisClient.renewConsoleSessionBindingTTL = async function (
+  accountId,
+  sessionHash,
+  ttlSeconds = 3600
+) {
+  try {
+    const bindingsKey = `console_session_bindings:${accountId}`
+    const detailKey = `console_session_detail:${accountId}:${sessionHash}`
+    const now = Date.now()
+    const newExpireAt = now + ttlSeconds * 1000
+
+    // 检查 session 是否存在
+    const score = await this.client.zscore(bindingsKey, sessionHash)
+    if (score === null) {
+      return false
+    }
+
+    // 更新过期时间
+    await this.client.zadd(bindingsKey, newExpireAt, sessionHash)
+
+    // 更新详情的 TTL
+    const detailData = await this.client.get(detailKey)
+    if (detailData) {
+      try {
+        const detail = JSON.parse(detailData)
+        detail.expireAt = new Date(newExpireAt).toISOString()
+        await this.client.setex(detailKey, ttlSeconds, JSON.stringify(detail))
+      } catch {
+        // 详情更新失败不影响主逻辑
+      }
+    }
+
+    logger.debug(
+      `🔄 Renewed session binding TTL for console account ${accountId}, session: ${sessionHash.substring(0, 8)}...`
+    )
+    return true
+  } catch (error) {
+    logger.error('❌ Failed to renew console session binding TTL:', error)
+    return false
+  }
+}
+
+/**
+ * 获取 Console 账户的所有绑定 Session 详情
+ * @param {string} accountId - 账户ID
+ * @returns {Promise<Array>} - 绑定的 session 列表
+ */
+redisClient.getConsoleSessionBindings = async function (accountId) {
+  try {
+    const bindingsKey = `console_session_bindings:${accountId}`
+    const now = Date.now()
+
+    // 先清理过期的
+    await this.client.zremrangebyscore(bindingsKey, '-inf', now)
+
+    // 获取所有绑定
+    const members = await this.client.zrange(bindingsKey, 0, -1, 'WITHSCORES')
+    const bindings = []
+
+    for (let i = 0; i < members.length; i += 2) {
+      const sessionHash = members[i]
+      const expireAt = parseInt(members[i + 1])
+
+      // 获取绑定详情
+      const detailKey = `console_session_detail:${accountId}:${sessionHash}`
+      let detail = {}
+      try {
+        const detailData = await this.client.get(detailKey)
+        if (detailData) {
+          detail = JSON.parse(detailData)
+        }
+      } catch {
+        // 详情解析失败，使用默认值
+      }
+
+      bindings.push({
+        sessionHash,
+        sessionHashShort: `${sessionHash.substring(0, 8)}...`,
+        apiKeyId: detail.apiKeyId || '',
+        apiKeyName: detail.apiKeyName || 'Unknown',
+        createdAt: detail.createdAt || '',
+        expireAt: new Date(expireAt).toISOString(),
+        remainingSeconds: Math.max(0, Math.round((expireAt - now) / 1000))
+      })
+    }
+
+    return bindings
+  } catch (error) {
+    logger.error('❌ Failed to get console session bindings:', error)
+    return []
+  }
+}
+
+/**
+ * 清理 Console 账户的所有 Session 绑定
+ * @param {string} accountId - 账户ID
+ * @returns {Promise<number>} - 清理的 session 数量
+ */
+redisClient.clearAllConsoleSessionBindings = async function (accountId) {
+  try {
+    const bindingsKey = `console_session_bindings:${accountId}`
+
+    // 获取所有 session hash
+    const sessionHashes = await this.client.zrange(bindingsKey, 0, -1)
+
+    // 删除所有详情
+    for (const sessionHash of sessionHashes) {
+      const detailKey = `console_session_detail:${accountId}:${sessionHash}`
+      await this.client.del(detailKey)
+    }
+
+    // 删除绑定集合
+    await this.client.del(bindingsKey)
+
+    logger.info(
+      `🧹 Cleared all session bindings for console account ${accountId}: ${sessionHashes.length} sessions`
+    )
+    return sessionHashes.length
+  } catch (error) {
+    logger.error('❌ Failed to clear all console session bindings:', error)
+    return 0
   }
 }
 

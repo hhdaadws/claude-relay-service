@@ -64,18 +64,26 @@ Claude Relay Service 是一个多平台 AI API 中转服务，支持 **Claude (�
 - **userMessageQueueService.js**: 用户消息串行队列，防止同账户并发用户消息触发限流
 - **pricingService.js**: 定价服务，模型价格管理和成本计算
 - **costInitService.js**: 成本数据初始化服务
+- **costRankService.js**: 成本排名服务
 - **webhookService.js**: Webhook通知服务
 - **webhookConfigService.js**: Webhook配置管理
 - **ldapService.js**: LDAP认证服务
 - **tokenRefreshService.js**: Token自动刷新服务
 - **rateLimitCleanupService.js**: 速率限制状态清理服务
 - **claudeCodeHeadersService.js**: Claude Code客户端请求头处理
+- **billingEventPublisher.js**: 计费事件发布服务
+- **accountNameCacheService.js**: 账户名称缓存服务
+- **modelService.js**: 模型管理服务
 
 #### 工具服务
 
 - **oauthHelper.js**: OAuth工具，PKCE流程实现和代理支持
 - **workosOAuthHelper.js**: WorkOS OAuth集成
 - **openaiToClaude.js**: OpenAI格式到Claude格式的转换
+
+#### 请求处理器
+
+- **geminiHandlers.js**: Gemini请求处理器，处理复杂的Gemini API交互逻辑
 
 ### 认证和代理流程
 
@@ -157,16 +165,29 @@ npm run dev                   # 开发模式（热重载）
 npm start                     # 生产模式
 npm test                      # 运行测试
 npm run lint                  # 代码检查
+npm run format                # 格式化代码
+
+# 运行单个测试文件
+npm test -- tests/concurrencyQueue.test.js
+npm test -- tests/userMessageQueue.test.js --watch
 
 # Docker部署
 docker-compose up -d          # 推荐方式
 docker-compose --profile monitoring up -d  # 包含监控
 
-# 服务管理
+# 服务管理（npm scripts）
 npm run service:start:daemon  # 后台启动（推荐）
 npm run service:status        # 查看服务状态
 npm run service:logs          # 查看日志
 npm run service:stop          # 停止服务
+
+# 服务管理（Makefile，可选）
+make help                     # 显示所有可用命令
+make install                  # 安装依赖
+make setup                    # 初始化配置
+make dev                      # 开发模式
+make service-daemon           # 后台启动
+make docker-up                # Docker启动
 
 ### 开发环境配置
 
@@ -423,9 +444,15 @@ npm run setup  # 自动生成密钥并创建管理员账户
 
 - 运行 `npm run lint` 进行代码风格检查（使用 ESLint）
 - 运行 `npm test` 执行测试套件（Jest + SuperTest 配置）
+- 运行单个测试：`npm test -- tests/concurrencyQueue.test.js`
+- 监听模式：`npm test -- --watch`
+- 现有测试覆盖：
+  - `tests/concurrencyQueue.test.js` - 并发队列单元测试
+  - `tests/concurrencyQueue.integration.test.js` - 并发队列集成测试
+  - `tests/userMessageQueue.test.js` - 用户消息队列测试
 - 在修改核心服务后，使用 CLI 工具验证功能：`npm run cli status`
 - 检查日志文件 `logs/claude-relay-*.log` 确认服务正常运行
-- 注意：当前项目缺少实际测试文件，建议补充单元测试和集成测试
+- 注意：测试覆盖仍在持续完善中，建议为新功能补充单元测试和集成测试
 
 ### 开发工作流
 
@@ -433,11 +460,13 @@ npm run setup  # 自动生成密钥并创建管理员账户
 - **调试流程**: 使用 Winston 日志 + Web 界面实时日志查看 + CLI 状态工具
 - **代码审查**: 关注安全性（加密存储）、性能（异步处理）、错误处理
 - **部署前检查**: 运行 lint → 测试 CLI 功能 → 检查日志 → Docker 构建
+- **Makefile选项**: 项目提供完整的Makefile，运行 `make help` 查看所有可用命令（可选，npm scripts也能完成所有操作）
 
 ### 常见文件位置
 
 - 核心服务逻辑：`src/services/` 目录（30+服务文件）
 - 路由处理：`src/routes/` 目录（api.js、admin.js、geminiRoutes.js、openaiRoutes.js等13个路由文件）
+- 请求处理器：`src/handlers/` 目录（geminiHandlers.js等）
 - 中间件：`src/middleware/` 目录（auth.js、browserFallback.js、debugInterceptor.js等）
 - 配置管理：`config/config.js`（完整的多平台配置）
 - Redis 模型：`src/models/redis.js`
@@ -464,6 +493,10 @@ npm run setup  # 自动生成密钥并创建管理员账户
   - `update-model-pricing.js` - 模型价格更新
   - `test-pricing-fallback.js` - 价格回退测试
   - `debug-redis-keys.js` - Redis调试
+- 测试文件：`tests/` 目录
+  - `concurrencyQueue.test.js` - 并发队列单元测试
+  - `concurrencyQueue.integration.test.js` - 并发队列集成测试
+  - `userMessageQueue.test.js` - 用户消息队列测试
 - 前端主题管理：`web/admin-spa/src/stores/theme.js`
 - 前端组件：`web/admin-spa/src/components/` 目录
 - 前端页面：`web/admin-spa/src/views/` 目录

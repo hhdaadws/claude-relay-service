@@ -68,7 +68,9 @@ class ClaudeConsoleAccountService {
       dailyQuota = 0, // 每日额度限制（美元），0表示不限制
       quotaResetTime = '00:00', // 额度重置时间（HH:mm格式）
       maxConcurrentTasks = 0, // 最大并发任务数，0表示无限制
-      disableAutoProtection = false // 是否关闭自动防护（429/401/400/529 不自动禁用）
+      disableAutoProtection = false, // 是否关闭自动防护（向后兼容，true表示禁用所有错误）
+      disabledAutoProtectionErrors = [], // 不会触发自动禁用的错误码列表（新字段）
+      sessionTtlMinutes = 60 // 粘性会话过期时间（分钟），默认60分钟
     } = options
 
     // 验证必填字段
@@ -117,7 +119,11 @@ class ClaudeConsoleAccountService {
       quotaResetTime, // 额度重置时间
       quotaStoppedAt: '', // 因额度停用的时间
       maxConcurrentTasks: maxConcurrentTasks.toString(), // 最大并发任务数，0表示无限制
-      disableAutoProtection: disableAutoProtection.toString() // 关闭自动防护
+      disableAutoProtection: disableAutoProtection.toString(), // 关闭自动防护（向后兼容）
+      disabledAutoProtectionErrors: JSON.stringify(
+        Array.isArray(disabledAutoProtectionErrors) ? disabledAutoProtectionErrors : []
+      ), // 不会触发自动禁用的错误码列表（新字段）
+      sessionTtlMinutes: sessionTtlMinutes.toString() // 粘性会话过期时间（分钟）
     }
 
     const client = redis.getClientSafe()
@@ -126,7 +132,8 @@ class ClaudeConsoleAccountService {
     )
     logger.debug(`[DEBUG] Account data to save: ${JSON.stringify(accountData, null, 2)}`)
 
-    await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, accountData)
+    // 使用 safeHset 过滤 null/undefined 值，兼容旧版 Redis
+    await redis.safeHset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, accountData)
 
     // 如果是共享账户，添加到共享账户集合
     if (accountType === 'shared') {
@@ -217,7 +224,26 @@ class ClaudeConsoleAccountService {
             // 并发控制相关
             maxConcurrentTasks: parseInt(accountData.maxConcurrentTasks) || 0,
             activeTaskCount,
-            disableAutoProtection: accountData.disableAutoProtection === 'true'
+            disableAutoProtection: accountData.disableAutoProtection === 'true',
+
+            // 自动防护配置（新字段）
+            disabledAutoProtectionErrors: (() => {
+              try {
+                const parsed = accountData.disabledAutoProtectionErrors
+                  ? JSON.parse(accountData.disabledAutoProtectionErrors)
+                  : []
+                // 向后兼容：如果旧字段为 true，返回所有错误码
+                if (accountData.disableAutoProtection === 'true') {
+                  return ['429', '401', '400', '529']
+                }
+                return parsed
+              } catch (e) {
+                return []
+              }
+            })(),
+
+            // 粘性会话 TTL（分钟）
+            sessionTtlMinutes: parseInt(accountData.sessionTtlMinutes) || 60
           })
         }
       }
@@ -273,6 +299,23 @@ class ClaudeConsoleAccountService {
     accountData.maxConcurrentTasks = parseInt(accountData.maxConcurrentTasks) || 0
     // 获取实时并发计数
     accountData.activeTaskCount = await redis.getConsoleAccountConcurrency(accountId)
+
+    // 解析粘性会话 TTL（分钟），默认60分钟
+    accountData.sessionTtlMinutes = parseInt(accountData.sessionTtlMinutes) || 60
+
+    // 解析自动防护配置（新字段）
+    try {
+      accountData.disabledAutoProtectionErrors = accountData.disabledAutoProtectionErrors
+        ? JSON.parse(accountData.disabledAutoProtectionErrors)
+        : []
+    } catch (e) {
+      accountData.disabledAutoProtectionErrors = []
+    }
+
+    // 向后兼容：如果 disableAutoProtection=true，映射为所有错误码都禁用
+    if (accountData.disableAutoProtection === 'true') {
+      accountData.disabledAutoProtectionErrors = ['429', '401', '400', '529']
+    }
 
     logger.debug(
       `[DEBUG] Final account data - name: ${accountData.name}, hasApiUrl: ${!!accountData.apiUrl}, hasApiKey: ${!!accountData.apiKey}, supportedModels: ${JSON.stringify(accountData.supportedModels)}`
@@ -376,6 +419,24 @@ class ClaudeConsoleAccountService {
         updatedData.disableAutoProtection = updates.disableAutoProtection.toString()
       }
 
+      // 粘性会话 TTL 配置
+      if (updates.sessionTtlMinutes !== undefined) {
+        updatedData.sessionTtlMinutes = updates.sessionTtlMinutes.toString()
+      }
+
+      // 自动防护配置（新字段）
+      if (updates.disabledAutoProtectionErrors !== undefined) {
+        if (Array.isArray(updates.disabledAutoProtectionErrors)) {
+          updatedData.disabledAutoProtectionErrors = JSON.stringify(
+            updates.disabledAutoProtectionErrors
+          )
+          // 同时更新旧字段以保持兼容
+          const allErrors = ['429', '401', '400', '529']
+          const disabledCount = updates.disabledAutoProtectionErrors.length
+          updatedData.disableAutoProtection = (disabledCount === allErrors.length).toString()
+        }
+      }
+
       // ✅ 直接保存 subscriptionExpiresAt（如果提供）
       // Claude Console 没有 token 刷新逻辑，不会覆盖此字段
       if (updates.subscriptionExpiresAt !== undefined) {
@@ -418,7 +479,8 @@ class ClaudeConsoleAccountService {
       logger.debug(`[DEBUG] Final updatedData to save: ${JSON.stringify(updatedData, null, 2)}`)
       logger.debug(`[DEBUG] Updating Redis key: ${this.ACCOUNT_KEY_PREFIX}${accountId}`)
 
-      await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updatedData)
+      // 使用 safeHset 过滤 null/undefined 值，兼容旧版 Redis
+      await redis.safeHset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updatedData)
 
       logger.success(`📝 Updated Claude Console account: ${accountId}`)
 
