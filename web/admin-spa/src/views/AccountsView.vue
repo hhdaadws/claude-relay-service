@@ -2457,6 +2457,7 @@ const openAccountUsageModal = async (account) => {
           accountSessionBindings.value = bindingsResponse.data
         }
       } catch (bindingsError) {
+        // eslint-disable-next-line no-console
         console.warn('Failed to load session bindings:', bindingsError)
         // 不影响主流程，继续显示其他数据
       }
@@ -2848,6 +2849,7 @@ const loadAccounts = async (forceReload = false) => {
           const res = await handler(params)
           return { platform, success: res?.success, data: res?.data }
         } catch (error) {
+          // eslint-disable-next-line no-console
           console.debug(`Failed to load ${platform} accounts:`, error)
           return { platform, success: false, data: [] }
         }
@@ -2959,6 +2961,7 @@ const loadAccounts = async (forceReload = false) => {
           }, {})
         }
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.debug('Failed to load auto-recovery configs:', error)
       }
 
@@ -3005,6 +3008,7 @@ const loadAccounts = async (forceReload = false) => {
     // 异步加载 Claude OAuth 账户的 usage 数据
     if (filteredAccounts.some((acc) => acc.platform === 'claude')) {
       loadClaudeUsage().catch((err) => {
+        // eslint-disable-next-line no-console
         console.debug('Claude usage loading failed:', err)
       })
     }
@@ -3034,6 +3038,7 @@ const loadClaudeUsage = async () => {
       })
     }
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.debug('Failed to load Claude usage data:', error)
   }
 }
@@ -4341,7 +4346,6 @@ const getSessionLabelClass = (account) => {
   return 'text-gray-700 dark:text-gray-200'
 }
 
-
 // 剩余额度（Claude Console）
 const formatRemainingQuota = (account) => {
   const used = Number(account?.usage?.daily?.cost || 0)
@@ -4517,6 +4521,7 @@ const handleSaveAccountExpiry = async ({ accountId, expiresAt }) => {
       }
     }
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error('更新账户过期时间失败:', error)
     showToast('更新失败', 'error')
     // 重置保存状态
