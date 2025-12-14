@@ -1,0 +1,126 @@
+name: Build 0.0.1 Branch
+
+on:
+  push:
+    branches:
+      - 0.0.1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Get version from VERSION file
+      id: version
+      run: |
+        if [ -f VERSION ]; then
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+        else
+          VERSION="0.0.1-dev"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/admin-spa/package-lock.json
+
+    - name: Build Frontend
+      run: |
+        echo "Building frontend..."
+        cd web/admin-spa
+        npm ci
+        npm run build
+        echo "Frontend build completed"
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: docker.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Prepare image names and tags
+      id: image_info
+      run: |
+        # Docker Hub 用户名，默认使用 miku66
+        DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+        if [ -z "$DOCKERHUB_USER" ]; then
+          DOCKERHUB_USER="miku66"
+        fi
+
+        # 镜像名称
+        DOCKER_IMAGE="${DOCKERHUB_USER}/claude-relay-service"
+        GHCR_IMAGE="ghcr.io/${{ github.repository_owner }}/claude-relay-service"
+
+        # 版本标签
+        VERSION="${{ steps.version.outputs.version }}"
+        BRANCH_TAG="0.0.1"
+
+        echo "docker_image=${DOCKER_IMAGE}" >> $GITHUB_OUTPUT
+        echo "ghcr_image=${GHCR_IMAGE}" >> $GITHUB_OUTPUT
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "branch_tag=${BRANCH_TAG}" >> $GITHUB_OUTPUT
+
+        echo "Docker Hub Image: ${DOCKER_IMAGE}"
+        echo "GHCR Image: ${GHCR_IMAGE}"
+        echo "Version: ${VERSION}"
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: |
+          ${{ steps.image_info.outputs.docker_image }}:${{ steps.image_info.outputs.branch_tag }}
+          ${{ steps.image_info.outputs.docker_image }}:${{ steps.image_info.outputs.version }}
+          ${{ steps.image_info.outputs.docker_image }}:dev
+          ${{ steps.image_info.outputs.ghcr_image }}:${{ steps.image_info.outputs.branch_tag }}
+          ${{ steps.image_info.outputs.ghcr_image }}:${{ steps.image_info.outputs.version }}
+          ${{ steps.image_info.outputs.ghcr_image }}:dev
+        labels: |
+          org.opencontainers.image.version=${{ steps.image_info.outputs.version }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.branch=0.0.1
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Output image info
+      run: |
+        echo "✅ Docker 镜像构建成功！"
+        echo ""
+        echo "📦 推送的镜像标签："
+        echo "  - ${{ steps.image_info.outputs.docker_image }}:${{ steps.image_info.outputs.branch_tag }}"
+        echo "  - ${{ steps.image_info.outputs.docker_image }}:${{ steps.image_info.outputs.version }}"
+        echo "  - ${{ steps.image_info.outputs.docker_image }}:dev"
+        echo "  - ${{ steps.image_info.outputs.ghcr_image }}:${{ steps.image_info.outputs.branch_tag }}"
+        echo "  - ${{ steps.image_info.outputs.ghcr_image }}:${{ steps.image_info.outputs.version }}"
+        echo "  - ${{ steps.image_info.outputs.ghcr_image }}:dev"
+        echo ""
+        echo "🚀 使用方法："
+        echo "  docker pull ${{ steps.image_info.outputs.docker_image }}:dev"
