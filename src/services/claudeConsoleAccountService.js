@@ -70,7 +70,8 @@ class ClaudeConsoleAccountService {
       maxConcurrentTasks = 0, // 最大并发任务数，0表示无限制
       disableAutoProtection = false, // 是否关闭自动防护（向后兼容，true表示禁用所有错误）
       disabledAutoProtectionErrors = [], // 不会触发自动禁用的错误码列表（新字段）
-      sessionTtlMinutes = 60 // 粘性会话过期时间（分钟），默认60分钟
+      sessionTtlMinutes = 60, // 粘性会话过期时间（分钟），默认60分钟
+      stickyMode = 'session' // 粘性会话绑定模式: session(默认) | ip | ip+apiKey
     } = options
 
     // 验证必填字段
@@ -123,7 +124,8 @@ class ClaudeConsoleAccountService {
       disabledAutoProtectionErrors: JSON.stringify(
         Array.isArray(disabledAutoProtectionErrors) ? disabledAutoProtectionErrors : []
       ), // 不会触发自动禁用的错误码列表（新字段）
-      sessionTtlMinutes: sessionTtlMinutes.toString() // 粘性会话过期时间（分钟）
+      sessionTtlMinutes: sessionTtlMinutes.toString(), // 粘性会话过期时间（分钟）
+      stickyMode: stickyMode || 'session' // 粘性会话绑定模式
     }
 
     const client = redis.getClientSafe()
@@ -243,7 +245,10 @@ class ClaudeConsoleAccountService {
             })(),
 
             // 粘性会话 TTL（分钟）
-            sessionTtlMinutes: parseInt(accountData.sessionTtlMinutes) || 60
+            sessionTtlMinutes: parseInt(accountData.sessionTtlMinutes) || 60,
+
+            // 粘性会话绑定模式
+            stickyMode: accountData.stickyMode || 'session'
           })
         }
       }
@@ -302,6 +307,9 @@ class ClaudeConsoleAccountService {
 
     // 解析粘性会话 TTL（分钟），默认60分钟
     accountData.sessionTtlMinutes = parseInt(accountData.sessionTtlMinutes) || 60
+
+    // 解析粘性会话绑定模式，默认 session
+    accountData.stickyMode = accountData.stickyMode || 'session'
 
     // 解析自动防护配置（新字段）
     try {
@@ -422,6 +430,14 @@ class ClaudeConsoleAccountService {
       // 粘性会话 TTL 配置
       if (updates.sessionTtlMinutes !== undefined) {
         updatedData.sessionTtlMinutes = updates.sessionTtlMinutes.toString()
+      }
+
+      // 粘性会话绑定模式配置
+      if (updates.stickyMode !== undefined) {
+        const validModes = ['session', 'ip', 'ip+apiKey']
+        if (validModes.includes(updates.stickyMode)) {
+          updatedData.stickyMode = updates.stickyMode
+        }
       }
 
       // 自动防护配置（新字段）

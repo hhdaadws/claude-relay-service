@@ -4705,9 +4705,13 @@ const refreshSessionBindings = async () => {
 const releaseSessionBinding = async (binding) => {
   if (!currentSessionAccount.value) return
 
+  // 获取显示用的 session hash（使用备用值）
+  const displayHash =
+    binding.sessionHashShort || binding.sessionHash?.substring(0, 8) + '...' || '未知'
+
   const confirmed = await showConfirm({
     title: '确认释放',
-    message: `确定要释放会话 ${binding.sessionHashShort} 的绑定吗？`,
+    message: `确定要释放会话 ${displayHash} 的绑定吗？`,
     confirmText: '释放',
     cancelText: '取消',
     type: 'warning'
@@ -4744,11 +4748,13 @@ const releaseSessionBinding = async (binding) => {
 
 // 格式化会话剩余时间（秒）
 const formatSessionRemainingTime = (seconds) => {
-  if (seconds <= 0) return '已过期'
-  if (seconds < 60) return `${seconds}秒`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
+  // 防护性检查：确保是有效数字
+  const sec = Number(seconds)
+  if (isNaN(sec) || sec <= 0) return '已过期'
+  if (sec < 60) return `${Math.floor(sec)}秒`
+  if (sec < 3600) return `${Math.floor(sec / 60)}分钟`
+  const hours = Math.floor(sec / 3600)
+  const minutes = Math.floor((sec % 3600) / 60)
   return `${hours}小时${minutes}分钟`
 }
 
