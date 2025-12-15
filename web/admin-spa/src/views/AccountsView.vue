@@ -1057,9 +1057,9 @@
                         </span>
                         <button
                           v-if="Number(account.currentSessionCount || 0) > 0"
-                          @click="showSessionBindingsModal(account)"
                           class="ml-1 rounded p-0.5 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
                           title="查看会话绑定详情"
+                          @click="showSessionBindingsModal(account)"
                         >
                           <svg
                             class="h-3.5 w-3.5"
@@ -1068,10 +1068,10 @@
                             viewBox="0 0 24 24"
                           >
                             <path
+                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                               stroke-linecap="round"
                               stroke-linejoin="round"
                               stroke-width="2"
-                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                             />
                           </svg>
                         </button>
@@ -2079,12 +2079,14 @@
     <!-- 粘性会话绑定详情模态框 -->
     <el-dialog
       v-model="sessionBindingsModalVisible"
+      :close-on-click-modal="false"
       title="粘性会话绑定详情"
       width="700px"
-      :close-on-click-modal="false"
     >
       <div v-if="sessionBindingsLoading" class="py-8 text-center">
-        <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
+        <div
+          class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"
+        ></div>
         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">加载中...</p>
       </div>
       <div v-else-if="sessionBindings.length === 0" class="py-8 text-center">
@@ -2096,7 +2098,11 @@
             账户: <span class="font-medium">{{ currentSessionAccount?.name }}</span>
           </span>
           <span class="text-sm text-gray-600 dark:text-gray-300">
-            共 <span class="font-medium text-blue-600 dark:text-blue-400">{{ sessionBindings.length }}</span> 个会话
+            共
+            <span class="font-medium text-blue-600 dark:text-blue-400">{{
+              sessionBindings.length
+            }}</span>
+            个会话
           </span>
         </div>
         <div class="max-h-96 space-y-2 overflow-y-auto">
@@ -2109,14 +2115,20 @@
               <div class="flex items-start justify-between">
                 <div class="flex-1">
                   <div class="mb-1 flex items-center gap-2">
-                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Session Hash:</span>
-                    <code class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400"
+                      >Session Hash:</span
+                    >
+                    <code
+                      class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                    >
                       {{ binding.sessionHashShort }}
                     </code>
                   </div>
                   <div class="flex items-center gap-2 text-xs">
                     <span class="text-gray-500 dark:text-gray-400">API Key:</span>
-                    <span class="font-medium text-gray-700 dark:text-gray-200">{{ binding.apiKeyName }}</span>
+                    <span class="font-medium text-gray-700 dark:text-gray-200">{{
+                      binding.apiKeyName
+                    }}</span>
                   </div>
                 </div>
                 <div class="text-right">
@@ -2131,13 +2143,20 @@
                     ]"
                   >
                     <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <path
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                      />
                     </svg>
-                    {{ formatRemainingTime(binding.remainingSeconds) }}
+                    {{ formatSessionRemainingTime(binding.remainingSeconds) }}
                   </div>
                 </div>
               </div>
-              <div class="flex items-center justify-between border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              <div
+                class="flex items-center justify-between border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+              >
                 <span>创建时间: {{ formatDateTime(binding.createdAt) }}</span>
                 <span>过期时间: {{ formatDateTime(binding.expireAt) }}</span>
               </div>
@@ -4643,14 +4662,11 @@ const showSessionBindingsModal = async (account) => {
 const loadSessionBindings = async (accountId) => {
   sessionBindingsLoading.value = true
   try {
-    const response = await fetch(
-      `/admin/claude-console-accounts/${accountId}/session-bindings`,
-      {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('adminToken')}`
-        }
+    const response = await fetch(`/admin/claude-console-accounts/${accountId}/session-bindings`, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       }
-    )
+    })
     const data = await response.json()
     if (data.success) {
       sessionBindings.value = data.data || []
@@ -4676,8 +4692,8 @@ const refreshSessionBindings = async () => {
   }
 }
 
-// 格式化剩余时间
-const formatRemainingTime = (seconds) => {
+// 格式化会话剩余时间（秒）
+const formatSessionRemainingTime = (seconds) => {
   if (seconds <= 0) return '已过期'
   if (seconds < 60) return `${seconds}秒`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
