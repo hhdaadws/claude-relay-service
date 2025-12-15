@@ -1055,6 +1055,26 @@
                           {{ Number(account.currentSessionCount || 0) }} /
                           {{ Number(account.maxConcurrentTasks || 0) }}
                         </span>
+                        <button
+                          v-if="Number(account.currentSessionCount || 0) > 0"
+                          @click="showSessionBindingsModal(account)"
+                          class="ml-1 rounded p-0.5 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                          title="查看会话绑定详情"
+                        >
+                          <svg
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -2055,6 +2075,81 @@
         </p>
       </div>
     </el-dialog>
+
+    <!-- 粘性会话绑定详情模态框 -->
+    <el-dialog
+      v-model="sessionBindingsModalVisible"
+      title="粘性会话绑定详情"
+      width="700px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="sessionBindingsLoading" class="py-8 text-center">
+        <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
+        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">加载中...</p>
+      </div>
+      <div v-else-if="sessionBindings.length === 0" class="py-8 text-center">
+        <p class="text-gray-500 dark:text-gray-400">暂无会话绑定</p>
+      </div>
+      <div v-else class="space-y-3">
+        <div class="mb-4 flex items-center justify-between">
+          <span class="text-sm text-gray-600 dark:text-gray-300">
+            账户: <span class="font-medium">{{ currentSessionAccount?.name }}</span>
+          </span>
+          <span class="text-sm text-gray-600 dark:text-gray-300">
+            共 <span class="font-medium text-blue-600 dark:text-blue-400">{{ sessionBindings.length }}</span> 个会话
+          </span>
+        </div>
+        <div class="max-h-96 space-y-2 overflow-y-auto">
+          <div
+            v-for="binding in sessionBindings"
+            :key="binding.sessionHash"
+            class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+          >
+            <div class="space-y-2">
+              <div class="flex items-start justify-between">
+                <div class="flex-1">
+                  <div class="mb-1 flex items-center gap-2">
+                    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Session Hash:</span>
+                    <code class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                      {{ binding.sessionHashShort }}
+                    </code>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-gray-500 dark:text-gray-400">API Key:</span>
+                    <span class="font-medium text-gray-700 dark:text-gray-200">{{ binding.apiKeyName }}</span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div
+                    :class="[
+                      'inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium',
+                      binding.remainingSeconds > 1800
+                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                        : binding.remainingSeconds > 600
+                          ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                          : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                    ]"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {{ formatRemainingTime(binding.remainingSeconds) }}
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center justify-between border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                <span>创建时间: {{ formatDateTime(binding.createdAt) }}</span>
+                <span>过期时间: {{ formatDateTime(binding.expireAt) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="sessionBindingsModalVisible = false">关闭</el-button>
+        <el-button type="primary" @click="refreshSessionBindings">刷新</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -2117,6 +2212,12 @@ const accountUsageSummary = ref({})
 const accountUsageOverview = ref({})
 const accountUsageGeneratedAt = ref('')
 const accountSessionBindings = ref(null) // Console 账户的 Session 绑定数据
+
+// 粘性会话绑定详情模态框
+const sessionBindingsModalVisible = ref(false)
+const sessionBindingsLoading = ref(false)
+const sessionBindings = ref([])
+const currentSessionAccount = ref(null)
 
 const supportedUsagePlatforms = [
   'claude',
@@ -4529,6 +4630,74 @@ const handleSaveAccountExpiry = async ({ accountId, expiresAt }) => {
       expiryEditModalRef.value.resetSaving()
     }
   }
+}
+
+// 显示粘性会话绑定详情模态框
+const showSessionBindingsModal = async (account) => {
+  currentSessionAccount.value = account
+  sessionBindingsModalVisible.value = true
+  await loadSessionBindings(account.id)
+}
+
+// 加载会话绑定数据
+const loadSessionBindings = async (accountId) => {
+  sessionBindingsLoading.value = true
+  try {
+    const response = await fetch(
+      `/admin/claude-console-accounts/${accountId}/session-bindings`,
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('adminToken')}`
+        }
+      }
+    )
+    const data = await response.json()
+    if (data.success) {
+      sessionBindings.value = data.data || []
+    } else {
+      showToast('加载会话绑定失败', 'error')
+      sessionBindings.value = []
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to load session bindings:', error)
+    showToast('加载会话绑定失败', 'error')
+    sessionBindings.value = []
+  } finally {
+    sessionBindingsLoading.value = false
+  }
+}
+
+// 刷新会话绑定
+const refreshSessionBindings = async () => {
+  if (currentSessionAccount.value) {
+    await loadSessionBindings(currentSessionAccount.value.id)
+    showToast('已刷新', 'success')
+  }
+}
+
+// 格式化剩余时间
+const formatRemainingTime = (seconds) => {
+  if (seconds <= 0) return '已过期'
+  if (seconds < 60) return `${seconds}秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return `${hours}小时${minutes}分钟`
+}
+
+// 格式化日期时间
+const formatDateTime = (isoString) => {
+  if (!isoString) return '-'
+  const date = new Date(isoString)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
 
 // 检测表格是否需要横向滚动

@@ -636,4 +636,25 @@ router.post('/claude-console-accounts/:accountId/test', authenticateAdmin, async
   }
 })
 
+// 获取 Claude Console 账户的粘性会话绑定详情
+router.get(
+  '/claude-console-accounts/:accountId/session-bindings',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+
+    try {
+      const bindings = await redis.getConsoleSessionBindings(accountId)
+      return res.json({ success: true, data: bindings })
+    } catch (error) {
+      logger.error(`❌ Failed to get session bindings for account ${accountId}:`, error)
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get session bindings',
+        message: error.message
+      })
+    }
+  }
+)
+
 module.exports = router
