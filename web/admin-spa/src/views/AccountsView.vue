@@ -4673,7 +4673,7 @@ const loadSessionBindings = async (accountId) => {
   try {
     const response = await fetch(`/admin/claude-console-accounts/${accountId}/session-bindings`, {
       headers: {
-        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('authToken')}`
       }
     })
     const data = await response.json()
@@ -4721,7 +4721,7 @@ const releaseSessionBinding = async (binding) => {
       {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('adminToken')}`
+          Authorization: `Bearer ${localStorage.getItem('authToken')}`
         }
       }
     )
