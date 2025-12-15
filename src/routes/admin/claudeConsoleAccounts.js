@@ -657,4 +657,30 @@ router.get(
   }
 )
 
+// 释放单个粘性会话绑定
+router.delete(
+  '/claude-console-accounts/:accountId/session-bindings/:sessionHash',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId, sessionHash } = req.params
+
+    try {
+      const remainingCount = await redis.decrConsoleSessionBinding(accountId, sessionHash)
+      logger.info(`✅ Released session binding for account ${accountId}, session ${sessionHash}`)
+      return res.json({
+        success: true,
+        message: 'Session binding released successfully',
+        remainingCount
+      })
+    } catch (error) {
+      logger.error(`❌ Failed to release session binding for account ${accountId}:`, error)
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to release session binding',
+        message: error.message
+      })
+    }
+  }
+)
+
 module.exports = router

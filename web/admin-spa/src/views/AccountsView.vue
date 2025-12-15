@@ -2158,7 +2158,16 @@
                 class="flex items-center justify-between border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
               >
                 <span>创建时间: {{ formatDateTime(binding.createdAt) }}</span>
-                <span>过期时间: {{ formatDateTime(binding.expireAt) }}</span>
+                <div class="flex items-center gap-3">
+                  <span>过期时间: {{ formatDateTime(binding.expireAt) }}</span>
+                  <button
+                    class="rounded px-2 py-0.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/30"
+                    title="释放此会话绑定"
+                    @click="releaseSessionBinding(binding)"
+                  >
+                    释放
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4689,6 +4698,47 @@ const refreshSessionBindings = async () => {
   if (currentSessionAccount.value) {
     await loadSessionBindings(currentSessionAccount.value.id)
     showToast('已刷新', 'success')
+  }
+}
+
+// 释放单个会话绑定
+const releaseSessionBinding = async (binding) => {
+  if (!currentSessionAccount.value) return
+
+  const confirmed = await showConfirm({
+    title: '确认释放',
+    message: `确定要释放会话 ${binding.sessionHashShort} 的绑定吗？`,
+    confirmText: '释放',
+    cancelText: '取消',
+    type: 'warning'
+  })
+
+  if (!confirmed) return
+
+  try {
+    const response = await fetch(
+      `/admin/claude-console-accounts/${currentSessionAccount.value.id}/session-bindings/${binding.sessionHash}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('adminToken')}`
+        }
+      }
+    )
+    const data = await response.json()
+    if (data.success) {
+      showToast('会话绑定已释放', 'success')
+      // 刷新列表
+      await loadSessionBindings(currentSessionAccount.value.id)
+      // 更新账户列表以反映新的会话数
+      await loadAccounts()
+    } else {
+      showToast(data.message || '释放失败', 'error')
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to release session binding:', error)
+    showToast('释放会话绑定失败', 'error')
   }
 }
 
